@@ -1,0 +1,3 @@
+# The game ships as one self-contained HTML file with base64 assets inlined.
+# Treat it as text so diffs of the code above the asset blob stay reviewable.
+*.html text eol=lf
