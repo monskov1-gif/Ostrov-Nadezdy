@@ -970,11 +970,23 @@ const hottohallInteractables = [
 // and the current camera, so they never leave residue in the room state and
 // always stop cleanly when the room changes.
 // ---------------------------------------------------------------------
-function drawVignette(strength, tint){
-  const g=ctx.createRadialGradient(W/2,H/2,H*0.28,W/2,H/2,H*0.78);
-  g.addColorStop(0,'rgba(0,0,0,0)');
-  g.addColorStop(1,tint||`rgba(0,0,0,${strength})`);
-  ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=g;ctx.fillRect(0,0,W,H);ctx.restore();
+// Every gradient below is built once and reused, with globalAlpha carrying the
+// per-frame variation. Rebuilding them each frame was most of the cost these
+// effects added, and that cost came straight out of the frame budget.
+const vignetteCache=new Map();
+function vignetteGradient(rgb){
+  let g=vignetteCache.get(rgb);
+  if(!g){
+    g=ctx.createRadialGradient(W/2,H/2,H*0.28,W/2,H/2,H*0.78);
+    g.addColorStop(0,`rgba(${rgb},0)`); g.addColorStop(1,`rgba(${rgb},1)`);
+    vignetteCache.set(rgb,g);
+  }
+  return g;
+}
+function drawVignette(alpha, rgb){
+  ctx.save();ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalAlpha=alpha; ctx.fillStyle=vignetteGradient(rgb||'0,0,0');
+  ctx.fillRect(0,0,W,H);ctx.restore();
 }
 // Grain is pre-rendered into a handful of tiles and cycled, so it costs a
 // blit per frame instead of a per-pixel loop.
@@ -999,43 +1011,68 @@ function drawFilmGrain(alpha){
   ctx.restore();
 }
 // A soft warm pool of light on the floor, e.g. under a lamp or a sconce.
+const poolCache=new Map();
+function poolGradient(r,rgb){
+  const k=r+'|'+rgb;
+  let g=poolCache.get(k);
+  if(!g){
+    g=ctx.createRadialGradient(0,0,0,0,0,r);
+    g.addColorStop(0,`rgba(${rgb},1)`);
+    g.addColorStop(0.55,`rgba(${rgb},0.35)`);
+    g.addColorStop(1,`rgba(${rgb},0)`);
+    poolCache.set(k,g);
+  }
+  return g;
+}
 function drawLightPool(x,y,r,rgb,peak,flickerHz){
   const t=performance.now()/1000;
   const a=peak*(flickerHz?(0.82+Math.sin(t*flickerHz)*0.10+Math.sin(t*flickerHz*2.7)*0.06):1);
-  const g=ctx.createRadialGradient(x,y,0,x,y,r);
-  g.addColorStop(0,`rgba(${rgb},${a})`);
-  g.addColorStop(0.55,`rgba(${rgb},${a*0.35})`);
-  g.addColorStop(1,`rgba(${rgb},0)`);
-  ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=g;
-  ctx.beginPath();ctx.ellipse(x,y,r,r*0.55,0,0,Math.PI*2);ctx.fill();ctx.restore();
+  ctx.save();
+  ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=a;
+  ctx.translate(x,y); ctx.scale(1,0.55);
+  ctx.fillStyle=poolGradient(r,rgb);
+  ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();
+  ctx.restore();
 }
 // Slow drifting motes, used for dust in the lobby and for the "something in
 // the air" feeling in the hallucination.
 const MOTES=[];for(let i=0;i<46;i++)MOTES.push({x:Math.random(),y:Math.random(),s:0.35+Math.random()*0.9,ph:Math.random()*99});
 function drawMotes(x0,y0,x1,y1,rgb,alpha,speed,count){
   const t=performance.now()/1000;
-  const list = count ? MOTES.slice(0,count) : MOTES;
+  const n = count || MOTES.length;
   ctx.save();ctx.globalCompositeOperation='lighter';
-  for(const m of list){
+  ctx.fillStyle=`rgb(${rgb})`;   // set once; per-mote brightness rides globalAlpha
+  for(let i=0;i<n;i++){
+    const m=MOTES[i];
     const dx=x0+((m.x+t*speed*0.012*m.s)%1)*(x1-x0);
     const dy=y0+((m.y+Math.sin(t*0.32+m.ph)*0.035+1)%1)*(y1-y0);
-    ctx.fillStyle=`rgba(${rgb},${alpha*(0.45+0.55*Math.sin(t*1.1+m.ph))})`;
+    ctx.globalAlpha=alpha*(0.45+0.55*Math.sin(t*1.1+m.ph));
     ctx.beginPath();ctx.arc(dx,dy,m.s*1.5,0,Math.PI*2);ctx.fill();
   }
   ctx.restore();
 }
 // The torch cone used in every unlit room.
+const torchCache=new Map();
+function torchGradient(radius,darkness){
+  const k=radius+'|'+darkness;
+  let g=torchCache.get(k);
+  if(!g){
+    g=ctx.createRadialGradient(0,0,16,0,0,radius);
+    g.addColorStop(0,'rgba(0,0,0,0)');
+    g.addColorStop(.42,'rgba(0,0,0,.10)');
+    g.addColorStop(.72,`rgba(0,0,0,${darkness*0.66})`);
+    g.addColorStop(1,`rgba(0,0,0,${darkness})`);
+    torchCache.set(k,g);
+  }
+  return g;
+}
 function drawTorchlight(radius,darkness){
   const sx=player.x, sy=player.y;
   ctx.save();
-  const g=ctx.createRadialGradient(sx,sy-14,16,sx,sy-14,radius);
-  g.addColorStop(0,'rgba(0,0,0,0)');
-  g.addColorStop(.42,'rgba(0,0,0,.10)');
-  g.addColorStop(.72,`rgba(0,0,0,${darkness*0.66})`);
-  g.addColorStop(1,`rgba(0,0,0,${darkness})`);
-  ctx.fillStyle=g;
+  ctx.translate(sx,sy-14);
+  ctx.fillStyle=torchGradient(radius,darkness);
   const b=ROOMS[currentRoomId].bounds;
-  ctx.fillRect(b.x0-600,b.y0-600,(b.x1-b.x0)+1200,(b.y1-b.y0)+1200);
+  ctx.fillRect(b.x0-sx-600,b.y0-(sy-14)-600,(b.x1-b.x0)+1200,(b.y1-b.y0)+1200);
   ctx.restore();
 }
 
@@ -1074,19 +1111,20 @@ function drawHottoHallRoom(){
     const split = 2.2 + Math.sin(t/430)*1.8 + (Math.random()<0.03 ? 5 : 0);
     ctx.save();
     ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.20;
-    ctx.drawImage(img,-split,0,W,H);
+    ctx.drawImage(img, 0,195,W,320, -split,195,W,320);
     ctx.restore();
 
     // The trail itself gets a slow crawling glow so the eye is led along it.
     const pulse = 0.5 + Math.sin(t/620)*0.5;
     ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=poolGradient(86,'148,16,20');
     for(let i=0;i<5;i++){
       const gx = 70 + i*92 + Math.sin(t/900 + i)*6;
       const gy = 352 + Math.sin(t/1100 + i*1.7)*4;
-      const g = ctx.createRadialGradient(gx,gy,0,gx,gy,86);
-      g.addColorStop(0,`rgba(148,16,20,${0.16*(0.4+pulse*0.6)*(1-i*0.13)})`);
-      g.addColorStop(1,'rgba(120,0,0,0)');
-      ctx.fillStyle=g; ctx.fillRect(gx-90,gy-60,180,120);
+      ctx.globalAlpha = 0.16*(0.4+pulse*0.6)*(1-i*0.13);
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.translate(gx,gy); ctx.scale(1,0.62);
+      ctx.beginPath(); ctx.arc(0,0,86,0,Math.PI*2); ctx.fill();
     }
     ctx.restore();
 
@@ -1095,7 +1133,7 @@ function drawHottoHallRoom(){
     // Everything below is screen-space: a red heartbeat vignette, a crawling
     // dark haze, and grain. All time-based, so leaving the room clears them.
     const beat = Math.pow(Math.max(0,Math.sin(t/760)),6);
-    drawVignette(0, `rgba(${60+beat*80|0},0,6,${0.62+beat*0.20})`);
+    drawVignette(0.62+beat*0.20, '78,0,6');
     drawMotes(0,180,W,520,'150,30,30',0.16,3.2,18);
     drawFilmGrain(0.30);
     return;
@@ -1223,6 +1261,39 @@ function buildReachableMap(room){
   }
   return {step,x0,y0,cols,rows,seen,key,fromCell,toCell};
 }
+const reachCache={};
+function reachMapFor(roomId){
+  return reachCache[roomId] || (reachCache[roomId]=buildReachableMap(ROOMS[roomId]));
+}
+// The reachability grid is sampled every 10px, so a perfectly good spot can
+// land between nodes and read as unreachable. Accept any reachable node in the
+// immediate neighbourhood; a genuinely sealed pocket has none anywhere near.
+function isReachable(roomId,x,y){
+  const m=reachMapFor(roomId), c=m.toCell(x,y);
+  for(let oy=-1;oy<=1;oy++) for(let ox=-1;ox<=1;ox++){
+    const ix=c.ix+ox, iy=c.iy+oy;
+    if(ix<0||iy<0||ix>=m.cols||iy>=m.rows) continue;
+    if(m.seen[m.key(ix,iy)]) return true;
+  }
+  return false;
+}
+// Nearest square that is both standable AND connected to the rest of the room,
+// so a mis-authored spawn can strand the player in a sealed pocket.
+function nearestReachable(roomId,x,y){
+  const m=reachMapFor(roomId), c=m.toCell(x,y), room=ROOMS[roomId];
+  for(let rad=0;rad<=Math.max(m.cols,m.rows);rad++){
+    for(let oy=-rad;oy<=rad;oy++) for(let ox=-rad;ox<=rad;ox++){
+      if(rad && Math.max(Math.abs(ox),Math.abs(oy))!==rad) continue;
+      const ix=c.ix+ox, iy=c.iy+oy;
+      if(ix<0||iy<0||ix>=m.cols||iy>=m.rows) continue;
+      if(!m.seen[m.key(ix,iy)]) continue;
+      const pt=m.fromCell(ix,iy);
+      if(validPosition(pt.x,pt.y,room)) return pt;
+    }
+  }
+  return null;
+}
+
 function auditInteractionPoints(){
   for(const [roomId,room] of Object.entries(ROOMS)){
     const map=buildReachableMap(room);
@@ -1255,22 +1326,9 @@ function switchRoom(roomId, spawnX, spawnY, facing){
   // edit overlaps the requested spawn, search nearby instead of spawning inside it.
   let sx = clamp(spawnX, room.bounds.x0 + 18, room.bounds.x1 - 18);
   let sy = clamp(spawnY, room.bounds.y0 + 34, room.bounds.y1 - 4);
-  if(!validPosition(sx, sy, room)){
-    const candidates=[];
-    for(let rad=20;rad<=220;rad+=10){
-      candidates.push([sx,sy-rad],[sx,sy+rad],[sx-rad,sy],[sx+rad,sy]);
-      if(candidates.some(([x,y])=>validPosition(x,y,room))) break;
-    }
-    const safe=candidates.find(([x,y])=>validPosition(x,y,room));
-    if(safe){sx=safe[0];sy=safe[1];}
-  }
-  if(!validPosition(sx,sy,room)){
-    const map=buildReachableMap(room);
-    outer: for(let i=0;i<map.seen.length;i++){
-      if(!map.seen[i]) continue;
-      const iy=Math.floor(i/map.cols),ix=i%map.cols,pt=map.fromCell(ix,iy);
-      sx=pt.x;sy=pt.y;break outer;
-    }
+  if(!validPosition(sx, sy, room) || !isReachable(roomId, sx, sy)){
+    const rescued = nearestReachable(roomId, sx, sy);
+    if(rescued){ sx=rescued.x; sy=rescued.y; }
   }
 
   player.x=sx; player.y=sy; player.facing=facing||'down'; camera={x:sx,y:sy}; currentTarget=null; startRoomAudio(roomId); updateQuestUI();
@@ -1797,7 +1855,7 @@ function examineInner(id){
 function triggerInteractable(id){
   if(currentRoomId==='corridor'){examineCorridor(id);return;}
   if(currentRoomId==='sora'){if(id==='sora_exit_lobby'){playDoorSound();switchRoom('corridor',255,258,'down');return;} if(id==='sora_exit_inner'){playDoorSound();F.innerDoorSeen=true;updateQuestUI();foggedRoomTransition('inner',780,400,'left',[L('kot','Что-то мне нехорошо...','normal'),L('kot','Голова закружилась...','normal')]);return;} examineSora(id);return;}
-  if(currentRoomId==='hotto'){if(id==='hotto_exit'){playDoorSound();switchRoom('corridor',765,300,'down');return;} examineHotto(id);return;}
+  if(currentRoomId==='hotto'){if(id==='hotto_exit'){playDoorSound();switchRoom('corridor',827,320,'down');return;} examineHotto(id);return;}
   if(currentRoomId==='hottohall'){examineHottoHall(id);return;}
   if(currentRoomId==='inner'){examineInner(id);return;}
 }
@@ -1874,35 +1932,49 @@ function collidesAt(x,y,obstacles){
   for(const o of obstacles) if(rectsOverlap(box,o)) return true;
   return false;
 }
-function updateMovement(){
+// Walking used to be a fixed 3.1px per FRAME, which quietly tied Kot's speed
+// to the frame rate: 60fps gave ~186px/s, 30fps gave ~90px/s, and any room
+// heavy enough to drop frames made him wade. Speed is per SECOND now, so the
+// same key press covers the same ground on any machine.
+const WALK_SPEED = 205; // px per second
+function updateMovement(dt){
   const room = ROOMS[currentRoomId];
-  const speed = 3.1;
+  const speed = WALK_SPEED * dt;
   let dx=0, dy=0;
   if(keys.up){dy=-speed; player.facing='up';}
   if(keys.down){dy=speed; player.facing='down';}
   if(keys.left){dx=-speed; player.facing='left';}
   if(keys.right){dx=speed; player.facing='right';}
   player.moving = dx!==0||dy!==0;
-  if(player.moving) playFootstep();
+  if(!player.moving) return;
+  playFootstep();
 
-  let nx = clamp(player.x+dx, room.bounds.x0, room.bounds.x1);
-  if(validPosition(nx, player.y, room)) player.x = nx;
-  let ny = clamp(player.y+dy, room.bounds.y0, room.bounds.y1);
-  if(validPosition(player.x, ny, room)) player.y = ny;
+  // Collision tests the destination, not the path, so one long frame could
+  // otherwise step clean through a wall. Walking is resolved in sub-steps of at
+  // most 4px, which keeps it exact at any frame rate without that risk — and
+  // lets the frame-time clamp above be generous instead of capping speed.
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx),Math.abs(dy))/4));
+  const sx = dx/steps, sy = dy/steps;
+  for(let i=0;i<steps;i++){
+    const nx = clamp(player.x+sx, room.bounds.x0, room.bounds.x1);
+    if(validPosition(nx, player.y, room)) player.x = nx;
+    const ny = clamp(player.y+sy, room.bounds.y0, room.bounds.y1);
+    if(validPosition(player.x, ny, room)) player.y = ny;
+  }
 
   // Room exits are intentionally NOT auto-triggered by collision.
-  // The player must approach the exit and press E, just like any other interactable.
-  // This prevents accidental teleport loops when an entrance spawn is close to an exit.
-  const feet = {x:player.x-10,y:player.y-8,w:20,h:14};
+  // The player must approach the exit and press E, just like any other
+  // interactable, which prevents teleport loops when a spawn sits near an exit.
 }
 
 // =====================================================================
 // RENDER
 // =====================================================================
-function updateNpcBob(){
-  soraChar.bobT += 0.045;
-  hottoChar.bobT += 0.05;
-  player.bobT += player.moving ? 0.26 : 0.04;
+function updateNpcBob(dt){
+  const f = dt*60; // the tuned per-frame rates, rescaled to real time
+  soraChar.bobT += 0.045*f;
+  hottoChar.bobT += 0.05*f;
+  player.bobT += (player.moving ? 0.26 : 0.04)*f;
 }
 
 function positionSoraVestibule(){ soraChar.x=698; soraChar.y=384; if(!dlgActive) soraChar.facing='left'; }
@@ -2060,9 +2132,14 @@ function render(){
 // MAIN LOOP
 // =====================================================================
 let started = false;
-function loop(){
-  if(started && !dlgActive && !directiveActive) updateMovement();
-  if(started) updateNpcBob();
+let lastFrameAt = 0;
+function loop(now){
+  // Clamped so a long stall (tab in the background, a GC pause) can't teleport
+  // Kot through a wall on the frame the page wakes up.
+  const dt = lastFrameAt ? Math.min((now - lastFrameAt)/1000, 0.25) : 1/60;
+  lastFrameAt = now;
+  if(started && !dlgActive && !directiveActive) updateMovement(dt);
+  if(started) updateNpcBob(dt);
   if(started) render();
   requestAnimationFrame(loop);
 }
@@ -2070,7 +2147,7 @@ function loop(){
 startBtn.addEventListener('click', ()=>{
   titleScreen.classList.remove('ready');
   titleScreen.style.display = 'none';
-  started = true;
+  started = true; lastFrameAt = 0;
   startRoomAudio('corridor');
   player.x=430; player.y=430; player.facing='up'; camera={x:430,y:430}; startRoomAudio('corridor'); updateQuestUI();
   scheduleAmbientThought();
