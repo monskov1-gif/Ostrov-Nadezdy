@@ -160,6 +160,21 @@
     font-family:'Nunito',sans-serif;font-weight:800;font-size:13px;color:var(--text-dark);
     background:linear-gradient(180deg,var(--gold),#a9814a);border:none;padding:10px 26px;border-radius:24px;cursor:pointer;
   }
+  #choice-modal{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    background:var(--paper);border:3px solid var(--paper-edge);border-radius:10px;
+    padding:20px 24px;color:var(--text-dark);min-width:340px;max-width:520px;
+    box-shadow:0 18px 40px rgba(0,0,0,.55);display:none;text-align:center;z-index:6;
+  }
+  #choice-modal.visible{display:block;}
+  #choice-text{font-size:14px;line-height:1.5;margin-bottom:16px;}
+  #choice-buttons{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+  #choice-buttons button{
+    font-family:'Nunito',sans-serif;font-weight:800;font-size:13px;color:var(--text-dark);
+    background:linear-gradient(180deg,var(--gold),#a9814a);border:none;
+    padding:10px 20px;border-radius:22px;cursor:pointer;box-shadow:0 4px 0 #7d5f34;
+  }
+  #choice-buttons button:active{transform:translateY(3px);box-shadow:0 1px 0 #7d5f34;}
   .flash-white{ animation: flashwhite 0.5s ease; }
   @keyframes flashwhite{ 0%{filter:brightness(1);} 30%{filter:brightness(2.6);} 100%{filter:brightness(1);} }
   .hidden{display:none!important;}
@@ -175,7 +190,7 @@
   <div id="loading">Загрузка...</div>
   <div id="hint">WASD / стрелки — идти&nbsp;&nbsp;·&nbsp;&nbsp;E или пробел — говорить/действовать</div>
   <div id="quest-log"><b>Задание</b><br><span id="quest-text"></span><span id="quest-optional"></span></div>
-  <div id="inventory"><div class="inv-slot" id="slot-key">🔑</div></div>
+  <div id="inventory"><div class="inv-slot" id="slot-key" title="Запасной ключ">🔑</div><div class="inv-slot" id="slot-letter" title="Письмо для Соры">✉️</div><div class="inv-slot" id="slot-card" title="Карта доступа №24">🪪</div><div class="inv-slot" id="slot-drive" title="Флешка">💾</div></div>
   <div id="prompt-bubble">!</div>
   <div id="world-interaction-markers"></div>
   <div id="found-toast"></div>
@@ -195,6 +210,10 @@
     </div>
   </div>
 
+  <div id="choice-modal">
+    <div id="choice-text"></div>
+    <div id="choice-buttons"></div>
+  </div>
   <div id="ending-screen">
     <h2>Глава 1</h2>
     <h1>«Гостевой визит»</h1>
@@ -227,6 +246,9 @@ const questLog = document.getElementById('quest-log');
 const questText = document.getElementById('quest-text');
 const optionalQuestTextEl = document.getElementById('quest-optional');
 const slotKey = document.getElementById('slot-key');
+const slotLetter = document.getElementById('slot-letter');
+const slotCard = document.getElementById('slot-card');
+const slotDrive = document.getElementById('slot-drive');
 const promptBubble = document.getElementById('prompt-bubble');
 const foundToast = document.getElementById('found-toast');
 
@@ -240,6 +262,9 @@ const directiveModal = document.getElementById('directive-modal');
 const directiveText = document.getElementById('directive-text');
 
 const endingScreen = document.getElementById('ending-screen');
+const choiceModal = document.getElementById('choice-modal');
+const choiceText = document.getElementById('choice-text');
+const choiceButtons = document.getElementById('choice-buttons');
 const restartBtn = document.getElementById('restart-btn');
 
 function rectsOverlap(a,b){
@@ -276,6 +301,7 @@ function loadImg(key){
 
 function checkAllLoaded(){
   if(imagesLoaded >= imagesToLoad){
+    registerPlaceholderCast();
     loadingEl.style.display = 'none';
     titleScreen.classList.add('ready');
   }
@@ -505,6 +531,7 @@ const F = { // flags
   questAssigned:false,
   hasKey:false,
   keyWrongTries:0,
+  searched_:{},
   keyDelivered:false,
   hottoInspectQuest:false,
   familyPhotoSeen:false,
@@ -518,25 +545,42 @@ const F = { // flags
   everEnteredHotto:false, innerLightsOn:false, innerPillsTaken:false, innerVisionDone:false, innerDoorSeen:false, optionalReminder:false,
   hottoHallUnlocked:false, hottoHallVisionSeen:false, hottoHallLightOn:false,
   innerEntryCommentDone:false, soraHeadacheDone:false,
+  hasLetter:false, hasCard:false, hasDrive:false,
+  elevAt:1, elevOpen:true, elevStuck:false, elevPressed:[],
+  soraSearched:0,            // how many wrong drawers before the key shows itself
+  cardFound:false, cardCallDone:false,
+  choiceMade:null,           // 'home' | 'help'
+  floor3Done:false, floor3Ready:false, lilyMet:false, penthouseReached:false, penthouseDone:false,
+  noteFound:false, photoFound:false, lanTalked:false, driveFound:false,
+  stealthOn:false, hallDoubleUntil:0, stealthCaught:0, sawDoubleHall:false, sawPainting:false, sawMirror:false, chapterDone:false,
 };
 
 function questStageText(){
   if(!F.questAssigned) return null;
   const sora = displayNameFor('sora'), hotto = displayNameFor('hotto');
-  if(F.questAssigned && !F.keyDelivered && !F.hasKey && !F.hottoSceneDone) return `Найти запасной ключ в квартире ${sora}`;
+  if(F.questAssigned && !F.keyDelivered && !F.hasKey && !F.hottoSceneDone)
+    return F.soraSearched<3 ? `Обыскать квартиру ${sora} — ключ где-то здесь`
+                            : `Забрать ключ из тумбы у кровати`;
   if(F.hasKey && !F.keyDelivered && !F.hottoSceneDone) return `Отнести ключ ${hotto} (квартира 104)`;
   if(F.keyDelivered && !F.hottoSceneDone) return hottoAllFound() ? `Поговорить с ${hotto}` : `Осмотреть квартиру ${hotto}`;
   if(F.hottoSceneDone && !F.finalTalkDone) return `Вернуться к ${sora} в вестибюль`;
+  if(F.choiceMade==='help' && !F.penthouseDone) return 'Отнести ключ на четвёртый этаж';
+  if(F.penthouseDone && !F.chapterDone) return `Вернуться к ${sora}`;
   if(F.finalTalkDone) return 'Глава завершена';
   return null;
 }
 function optionalQuestText(){
   if(!F.optionalReminder || F.innerPillsTaken) return null;
+  if(F.hasKey) return 'Принять таблетки — соседняя дверь';
   if(!F.innerDoorSeen) return 'Дополнительно: заглянуть в соседнюю дверь';
   if(!F.innerLightsOn) return 'Дополнительно: включить свет';
   return 'Дополнительно: принять таблетки';
 }
 function updateQuestUI(){
+  slotKey.classList.toggle('visible', F.hasKey);
+  slotLetter.classList.toggle('visible', F.hasLetter);
+  slotCard.classList.toggle('visible', F.hasCard);
+  slotDrive.classList.toggle('visible', F.hasDrive);
   const t = questStageText();
   if(!t){ questLog.classList.remove('visible'); return; }
   questLog.classList.add('visible');
@@ -545,6 +589,9 @@ function updateQuestUI(){
   optionalQuestTextEl.textContent = opt || '';
   optionalQuestTextEl.style.display = opt ? 'block' : 'none';
   slotKey.classList.toggle('visible', F.hasKey);
+  slotLetter.classList.toggle('visible', F.hasLetter);
+  slotCard.classList.toggle('visible', F.hasCard);
+  slotDrive.classList.toggle('visible', F.hasDrive);
 }
 function toast(msg){
   foundToast.textContent = msg;
@@ -573,7 +620,7 @@ function imgFor(char){ return IMAGES[spriteKeyFor(char)]; }
 const spriteCache = {};
 function prepareSprite(key){
   const img = IMAGES[key];
-  if(!img || !img.width || spriteCache[key]) return;
+  if(!img || !img.width || spriteCache[key] || PROC_KEYS.has(key)) return;
   const c=document.createElement('canvas'); c.width=img.naturalWidth||img.width; c.height=img.naturalHeight||img.height;
   const x=c.getContext('2d'); x.drawImage(img,0,0);
   const d=x.getImageData(0,0,c.width,c.height), pix=d.data, w=c.width, h=c.height;
@@ -628,7 +675,7 @@ let dlgOnDone = null;
 const portraitCache = {};
 function preparePortrait(key){
   const img = IMAGES[key];
-  if(!img || !img.width || portraitCache[key]) return;
+  if(!img || !img.width || portraitCache[key] || PROC_KEYS.has(key)) return;
   const c = document.createElement('canvas');
   c.width = img.naturalWidth || img.width; c.height = img.naturalHeight || img.height;
   const x = c.getContext('2d'); x.drawImage(img,0,0);
@@ -649,18 +696,291 @@ function preparePortrait(key){
   x.putImageData(d,0,0); portraitCache[key]=c.toDataURL('image/png');
 }
 
+
+// =====================================================================
+// PLACEHOLDER CAST — characters with no art yet, drawn in code.
+//
+// These render into offscreen canvases at load and are then registered into
+// IMAGES / spriteCache / portraitCache under exactly the same key names real
+// art would use. When a real asset lands in ASSET_DATA under that key it wins
+// automatically and the generated stand-in for it is simply never built — so
+// swapping a character over to finished art is a one-line change (add the
+// asset, drop its name from PROC_CAST).
+//
+// The style is deliberate rather than rough: flat shapes, one rim light, the
+// game's own palette. They read as "not yet revealed", not as broken art.
+// =====================================================================
+const PROC_CAST = {
+  lily: {
+    name:'Лили-Роуз',
+    skin:'#f0d3c2', hair:'#8d2340', hairLo:'#5e1329', hairHi:'#c4476b',
+    cloth:'#b83a5c', clothLo:'#7d2440', accent:'#f0c674', eye:'#2e6f6a',
+    h:150, build:0.92, longHair:true, dress:true,
+  },
+  anmi: {
+    name:'Анми-Регле',
+    skin:'#e6cbb8', hair:'#2a1f33', hairLo:'#160f1d', hairHi:'#4a3557',
+    cloth:'#3b2b4d', clothLo:'#241a30', accent:'#9fd6e8', eye:'#c9a15f',
+    h:186, build:0.78, longHair:false, dress:false, hat:true, shards:true,
+  },
+  lan: {
+    name:'Лань Чжань',
+    skin:'#e8d3bd', hair:'#39424f', hairLo:'#242c37', hairHi:'#5d6b7c',
+    cloth:'#33414f', clothLo:'#212b35', accent:'#a9cddb', eye:'#5f8595',
+    h:180, build:0.88, longHair:true, coat:true,
+  },
+  guard: {
+    name:'Охрана',
+    skin:'#d9bda6', hair:'#1b1b1e', hairLo:'#0e0e10', hairHi:'#33333a',
+    cloth:'#2f3a3a', clothLo:'#1b2222', accent:'#e0b552', eye:'#20303a',
+    h:168, build:1.05, longHair:false, cap:true,
+  },
+};
+
+function procCanvas(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; return c; }
+
+// ---- overworld sprite -------------------------------------------------
+function buildProcSprite(key, facing){
+  const P = PROC_CAST[key];
+  const W0 = 64, H0 = 150;
+  const c = procCanvas(W0,H0), x = c.getContext('2d');
+  const cx = W0/2, b = PROC_CAST[key].build;
+  const back = facing==='back', side = facing==='side_a'||facing==='side_b';
+  const flip = facing==='side_b';
+  x.save();
+  if(flip){ x.translate(W0,0); x.scale(-1,1); }
+
+  const headR = 15*b, headY = 34;
+  // legs
+  x.fillStyle=P.clothLo;
+  x.fillRect(cx-9*b, 104, 7*b, 34);
+  x.fillRect(cx+2*b, 104, 7*b, 34);
+  // shoes
+  x.fillStyle='#191216';
+  x.fillRect(cx-10*b, 136, 9*b, 6); x.fillRect(cx+1*b, 136, 9*b, 6);
+
+  // body / dress / coat
+  x.fillStyle=P.cloth;
+  if(P.dress){
+    x.beginPath(); x.moveTo(cx-11*b,52); x.lineTo(cx+11*b,52);
+    x.lineTo(cx+20*b,116); x.lineTo(cx-20*b,116); x.closePath(); x.fill();
+  } else if(P.coat){
+    x.beginPath(); x.moveTo(cx-13*b,52); x.lineTo(cx+13*b,52);
+    x.lineTo(cx+15*b,124); x.lineTo(cx-15*b,124); x.closePath(); x.fill();
+  } else {
+    x.fillRect(cx-13*b, 52, 26*b, 56);
+  }
+  // shading down the trailing side
+  x.fillStyle=P.clothLo; x.globalAlpha=.55;
+  x.fillRect(cx+4*b, 52, 9*b, P.dress?64:56); x.globalAlpha=1;
+  // accent trim
+  x.fillStyle=P.accent;
+  if(P.dress) x.fillRect(cx-11*b, 66, 22*b, 3);
+  else if(P.coat){ x.fillRect(cx-2*b, 52, 4*b, 70); }
+  else x.fillRect(cx-13*b, 74, 26*b, 4);
+
+  // arms
+  x.fillStyle=P.cloth;
+  x.fillRect(cx-17*b, 56, 6*b, 40); x.fillRect(cx+11*b, 56, 6*b, 40);
+  x.fillStyle=P.skin;
+  x.fillRect(cx-17*b, 94, 6*b, 7); x.fillRect(cx+11*b, 94, 6*b, 7);
+
+  // neck + head
+  x.fillStyle=P.skin;
+  x.fillRect(cx-4*b, 44, 8*b, 10);
+  x.beginPath(); x.ellipse(cx, headY+8, headR, headR*1.12, 0,0,Math.PI*2); x.fill();
+
+  // hair
+  x.fillStyle=P.hair;
+  x.beginPath(); x.ellipse(cx, headY+2, headR+2.5, headR*0.96, 0, Math.PI, 0); x.fill();
+  if(P.longHair){
+    x.beginPath();
+    x.moveTo(cx-headR-2, headY+2); x.quadraticCurveTo(cx-headR-6, 80, cx-headR+1, 96);
+    x.lineTo(cx-headR+8, 94); x.quadraticCurveTo(cx-headR+4, 66, cx-headR+3, headY+4);
+    x.closePath(); x.fill();
+    x.beginPath();
+    x.moveTo(cx+headR+2, headY+2); x.quadraticCurveTo(cx+headR+6, 80, cx+headR-1, 96);
+    x.lineTo(cx+headR-8, 94); x.quadraticCurveTo(cx+headR-4, 66, cx+headR-3, headY+4);
+    x.closePath(); x.fill();
+  }
+  x.fillStyle=P.hairHi; x.globalAlpha=.75;
+  x.beginPath(); x.ellipse(cx-headR*0.42, headY-1, headR*0.46, headR*0.30, -0.4, 0, Math.PI*2); x.fill();
+  x.globalAlpha=1;
+  if(P.hat){
+    x.fillStyle=P.hairLo; x.fillRect(cx-headR-6, headY-10, (headR+6)*2, 4);
+    x.fillRect(cx-headR+2, headY-26, (headR-2)*2, 17);
+    x.fillStyle=P.accent; x.fillRect(cx-headR+2, headY-14, (headR-2)*2, 3);
+  }
+  if(P.cap){
+    x.fillStyle=P.clothLo; x.fillRect(cx-headR-1, headY-6, (headR+1)*2, 7);
+    x.fillRect(cx-headR-4, headY, (headR+4)*2, 3);
+  }
+
+  // face — only when we can see it
+  if(!back){
+    x.fillStyle=P.eye;
+    if(side){ x.fillRect(cx+3*b, headY+7, 3, 3.5); }
+    else { x.fillRect(cx-7*b, headY+7, 3.5, 3.5); x.fillRect(cx+4*b, headY+7, 3.5, 3.5); }
+  }
+  // rim light, so they sit in the game's lighting instead of floating flat
+  x.globalCompositeOperation='source-atop';
+  const g=x.createLinearGradient(cx-24,0,cx+24,0);
+  g.addColorStop(0,'rgba(255,206,150,.16)'); g.addColorStop(.55,'rgba(0,0,0,0)');
+  g.addColorStop(1,'rgba(80,140,190,.13)');
+  x.fillStyle=g; x.fillRect(0,0,W0,H0);
+  x.restore();
+  return c;
+}
+
+// ---- dialogue portrait ------------------------------------------------
+function buildProcPortrait(key, emotion){
+  const P = PROC_CAST[key];
+  const W0=300, H0=430;
+  const c = procCanvas(W0,H0), x=c.getContext('2d');
+  const cx=W0*0.5, headY=196, headR=60;
+  const smile = emotion==='smile', talk = emotion==='talk';
+
+  // A soft wash behind the figure so the dark characters still read against
+  // whatever room is behind the dialogue box.
+  const bg=x.createRadialGradient(cx,headY+30,20,cx,headY+30,240);
+  bg.addColorStop(0,'rgba(28,24,26,.50)'); bg.addColorStop(1,'rgba(20,17,19,0)');
+  x.fillStyle=bg; x.fillRect(0,0,W0,H0);
+
+  // hair mass BEHIND head and shoulders — a halo, not a hood
+  x.fillStyle=P.hairLo;
+  if(P.longHair){
+    x.beginPath(); x.moveTo(cx-headR-16, headY-30);
+    x.quadraticCurveTo(cx-headR-40, headY+110, cx-headR-26, H0);
+    x.lineTo(cx+headR+26, H0);
+    x.quadraticCurveTo(cx+headR+40, headY+110, cx+headR+16, headY-30);
+    x.closePath(); x.fill();
+  }
+  x.beginPath(); x.ellipse(cx, headY-14, headR+13, headR+13, 0, 0, Math.PI*2); x.fill();
+
+  // shoulders / garment
+  x.fillStyle=P.cloth;
+  x.beginPath();
+  x.moveTo(cx-150,H0); x.quadraticCurveTo(cx-132,322, cx-58,300);
+  x.lineTo(cx+58,300); x.quadraticCurveTo(cx+132,322, cx+150,H0);
+  x.closePath(); x.fill();
+  x.fillStyle=P.clothLo; x.globalAlpha=.55;
+  x.beginPath(); x.moveTo(cx+26,300); x.lineTo(cx+150,H0); x.lineTo(cx+34,H0); x.closePath(); x.fill();
+  x.globalAlpha=1;
+  if(P.coat){ x.fillStyle=P.accent; x.fillRect(cx-4,300,8,H0-300); }
+  else { x.fillStyle=P.accent; x.fillRect(cx-56,300,112,6); }
+
+  // neck
+  x.fillStyle=P.skin; x.fillRect(cx-21, headY+40, 42, 62);
+  x.fillStyle='rgba(110,72,62,.22)'; x.fillRect(cx-21, headY+40, 42, 13);
+
+  // face
+  x.fillStyle=P.skin;
+  x.beginPath(); x.ellipse(cx, headY, headR, headR*1.14, 0,0,Math.PI*2); x.fill();
+
+  // front hair: fringe plus two locks framing the face
+  x.fillStyle=P.hair;
+  x.beginPath(); x.ellipse(cx, headY-18, headR+4, headR*0.80, 0, Math.PI, 0); x.fill();
+  x.beginPath(); x.moveTo(cx-headR-3, headY-24);
+  x.quadraticCurveTo(cx-headR-11, headY+34, cx-headR-2, headY+74);
+  x.lineTo(cx-headR+17, headY+68);
+  x.quadraticCurveTo(cx-headR+8, headY+20, cx-headR+10, headY-22);
+  x.closePath(); x.fill();
+  x.save(); x.translate(W0,0); x.scale(-1,1);
+  x.beginPath(); x.moveTo(cx-headR-3, headY-24);
+  x.quadraticCurveTo(cx-headR-11, headY+34, cx-headR-2, headY+74);
+  x.lineTo(cx-headR+17, headY+68);
+  x.quadraticCurveTo(cx-headR+8, headY+20, cx-headR+10, headY-22);
+  x.closePath(); x.fill(); x.restore();
+  x.fillStyle=P.hairHi; x.globalAlpha=.85;
+  x.beginPath(); x.ellipse(cx-24, headY-44, 30, 12, -0.34, 0, Math.PI*2); x.fill();
+  x.globalAlpha=1;
+
+  if(P.hat){
+    x.fillStyle=P.hairLo; x.fillRect(cx-headR-28, headY-62, (headR+28)*2, 11);
+    x.fillRect(cx-headR+2, headY-124, (headR-2)*2, 64);
+    x.fillStyle=P.accent; x.fillRect(cx-headR+2, headY-90, (headR-2)*2, 9);
+  }
+  if(P.cap){
+    x.fillStyle=P.clothLo; x.fillRect(cx-headR-3, headY-58, (headR+3)*2, 26);
+    x.fillRect(cx-headR-19, headY-36, (headR+19)*2, 9);
+    x.fillStyle=P.accent; x.fillRect(cx-12, headY-52, 24, 9);
+  }
+
+  // eyes
+  x.fillStyle='#f6f0ea';
+  x.beginPath(); x.ellipse(cx-25, headY+4, 13, smile?6:9.5, 0,0,Math.PI*2); x.fill();
+  x.beginPath(); x.ellipse(cx+25, headY+4, 13, smile?6:9.5, 0,0,Math.PI*2); x.fill();
+  x.fillStyle=P.eye;
+  x.beginPath(); x.ellipse(cx-24, headY+5, 6.4, smile?5:7.4, 0,0,Math.PI*2); x.fill();
+  x.beginPath(); x.ellipse(cx+26, headY+5, 6.4, smile?5:7.4, 0,0,Math.PI*2); x.fill();
+  x.fillStyle='rgba(255,255,255,.85)';
+  x.beginPath(); x.arc(cx-26, headY+1, 2.1, 0, Math.PI*2); x.fill();
+  x.beginPath(); x.arc(cx+24, headY+1, 2.1, 0, Math.PI*2); x.fill();
+  // brows
+  x.strokeStyle=P.hairLo; x.lineWidth=4; x.lineCap='round';
+  x.beginPath(); x.moveTo(cx-38, headY-16); x.lineTo(cx-13, headY-19); x.stroke();
+  x.beginPath(); x.moveTo(cx+13, headY-19); x.lineTo(cx+38, headY-16); x.stroke();
+  // nose + mouth
+  x.strokeStyle='rgba(150,104,92,.55)'; x.lineWidth=2.6;
+  x.beginPath(); x.moveTo(cx+1, headY+16); x.lineTo(cx-4, headY+27); x.stroke();
+  x.strokeStyle='#9a555a'; x.lineWidth=3.2; x.beginPath();
+  if(smile){ x.moveTo(cx-14, headY+42); x.quadraticCurveTo(cx, headY+53, cx+14, headY+42); }
+  else if(talk){ x.moveTo(cx-10, headY+43); x.quadraticCurveTo(cx, headY+52, cx+10, headY+43); }
+  else { x.moveTo(cx-11, headY+45); x.lineTo(cx+11, headY+45); }
+  x.stroke();
+
+  if(P.shards){ // Anmi's glass-couture motif on the garment
+    x.fillStyle='rgba(159,214,232,.42)';
+    for(let i=0;i<8;i++){
+      const sx=cx-118+i*34, sy=336+((i*29)%56);
+      x.beginPath(); x.moveTo(sx,sy); x.lineTo(sx+10,sy+18); x.lineTo(sx-6,sy+15); x.closePath(); x.fill();
+    }
+  }
+  // rim light
+  x.globalCompositeOperation='source-atop';
+  const g=x.createLinearGradient(0,0,W0,0);
+  g.addColorStop(0,'rgba(255,206,150,.22)'); g.addColorStop(.5,'rgba(0,0,0,0)');
+  g.addColorStop(1,'rgba(90,150,200,.18)');
+  x.fillStyle=g; x.fillRect(0,0,W0,H0);
+  x.globalCompositeOperation='source-over';
+  return c;
+}
+
+// Register the stand-ins under the same names real art would use. Anything
+// already present in ASSET_DATA is left completely alone.
+const PROC_KEYS = new Set();
+function registerPlaceholderCast(){
+  for(const key of Object.keys(PROC_CAST)){
+    for(const [facing,suffix] of [['front','front'],['back','back'],['side_a','side_a'],['side_b','side_b']]){
+      const k = key+'_'+suffix;
+      if(ASSET_DATA[k]) continue;
+      const c = buildProcSprite(key, facing);
+      IMAGES[k]=c; spriteCache[k]=c; PROC_KEYS.add(k);
+    }
+    for(const emo of ['normal','talk','smile']){
+      const k = key+'_dlg_'+emo;
+      if(ASSET_DATA[k]) continue;
+      const c = buildProcPortrait(key, emo);
+      IMAGES[k]=c; portraitCache[k]=c.toDataURL('image/png'); PROC_KEYS.add(k);
+    }
+  }
+}
+
 const PORTRAITS = {
   kot:  { normal:'kot_dlg_normal', talk:'kot_dlg_talk', smile:'kot_dlg_smile', phone:'kot_dlg_phone' },
   sora: { normal:'sora_dlg_normal_new', talk:'sora_dlg_talk_new', smile:'sora_dlg_smile_new', phone:'sora_dlg_phone' },
   hotto:{ normal:'hotto_dlg_normal', talk:'hotto_dlg_talk', letter:'hotto_dlg_letter' },
   gabi: { normal:'gabi_dlg_normal_new', talk:'gabi_dlg_talk_new', smile:'gabi_dlg_smile_new', phone:'gabi_phone_silhouette' },
+  lily: { normal:'lily_dlg_normal', talk:'lily_dlg_talk', smile:'lily_dlg_smile' },
+  anmi: { normal:'anmi_dlg_normal', talk:'anmi_dlg_talk', smile:'anmi_dlg_smile' },
+  lan:  { normal:'lan_dlg_normal',  talk:'lan_dlg_talk',  smile:'lan_dlg_smile'  },
   directive: null
 };
-const DISPLAY_NAME = { kot:'Кот', sora:'Сора', hotto:'Хотто', gabi:'Габи' };
+const DISPLAY_NAME = { kot:'Кот', sora:'Сора', hotto:'Хотто', gabi:'Габи', lily:'Лили-Роуз', anmi:'Анми-Регле', lan:'Лань Чжань' };
 // Names stay hidden as "???" until someone actually says them out loud in a
 // dialogue line. Revealing happens progressively so a first playthrough
 // genuinely learns who's who as the characters address each other.
-const knownNames = { kot:false, sora:false, hotto:false, gabi:false };
+const knownNames = { kot:false, sora:false, hotto:false, gabi:false, lily:false, anmi:false, lan:false };
 function displayNameFor(key){ return knownNames[key] ? DISPLAY_NAME[key] : '???'; }
 function revealNamesFromText(text){
   if(!text) return;
@@ -727,6 +1047,8 @@ function advanceDialogue(){
   }
 }
 
+let seqLocks = 0;
+function sceneLocked(){ return cutsceneActive || seqLocks>0; }
 // Generic scripted sequence runner: steps = [{type:'dialogue'|'directive', lines/text}]
 function runSequence(steps, onAllDone){
   if(!steps.length){ if(onAllDone) onAllDone(); return; }
@@ -737,7 +1059,10 @@ function runSequence(steps, onAllDone){
     showDirective(step.text, ()=> runSequence(rest, onAllDone));
   } else if(step.type==='fn'){
     step.fn();
-    if(step.wait) setTimeout(()=>runSequence(rest, onAllDone), step.wait);
+    if(step.wait){
+      seqLocks++;
+      setTimeout(()=>{ seqLocks--; runSequence(rest, onAllDone); }, step.wait);
+    }
     else runSequence(rest, onAllDone);
   }
 }
@@ -783,13 +1108,14 @@ function actionFor(e){
 window.addEventListener('keydown', e=>{
   const act = actionFor(e);
   if(!act) return;
+  if(choiceActive) return;
   if(act!=='act') keys[act] = true;
   if(e.code==='Space'||e.key===' ') e.preventDefault();
   if(e.repeat) return;   // holding the key must not fast-forward the dialogue
   if(act==='act'){
     if(directiveActive){ closeDirective(); }
     else if(dlgActive){ advanceDialogue(); }
-    else if(currentTarget){ triggerInteractable(currentTarget.id); }
+    else if(currentTarget && !sceneLocked()){ triggerInteractable(currentTarget.id); }
   }
 });
 window.addEventListener('keyup', e=>{ const act=actionFor(e); if(act&&act!=='act') keys[act]=false; });
@@ -811,7 +1137,8 @@ const CAMERA_ZOOM = 1.10;
 // the zoom and the sprite height have to be tuned per room instead of
 // globally. Every place that projects world->screen reads these helpers, so
 // they can never drift out of sync with each other again.
-const ROOM_ZOOM = { hotto:1.0, hottohall:1.75 };
+const ROOM_ZOOM = { hotto:1.0, hottohall:1.75, elevator:1.0 };
+const CAMERA_STATIC = new Set(['hotto','elevator']);
 const ROOM_SPRITE_SCALE = { hotto:1.22, hottohall:0.58 };
 function roomZoom(id){ return ROOM_ZOOM[id ?? currentRoomId] ?? CAMERA_ZOOM; }
 function roomSpriteScale(id){ return ROOM_SPRITE_SCALE[id ?? currentRoomId] ?? 1; }
@@ -833,7 +1160,7 @@ const soraInteractables = [
   {id:'sora_monitor',cx:560,cy:150,r:62,ipx:560,ipy:350},
   {id:'sora_wardrobe',cx:205,cy:180,r:62,ipx:285,ipy:250},
   {id:'sora_bed',cx:72,cy:300,r:62,ipx:155,ipy:365},
-  {id:'sora_nightstand',cx:748,cy:370,r:58,ipx:700,ipy:450},
+  {id:'sora_nightstand',cx:748,cy:370,r:58,ipx:700,ipy:450,hidden:()=>F.soraSearched<3},
   {id:'sora_photo',cx:735,cy:102,r:55,ipx:735,ipy:315},
   {id:'sora_exit_inner',cx:220,cy:660,r:55,ipx:220,ipy:610},
   {id:'sora_exit_lobby',cx:650,cy:660,r:55,ipx:650,ipy:610},
@@ -964,6 +1291,7 @@ const hottohallInteractables = [
   { id:'hottohall_door2', cx:650, cy:262, r:56, ipx:650, ipy:374 },
   { id:'hottohall_mirror', cx:846, cy:266, r:56, ipx:836, ipy:376 },
   { id:'hottohall_alcove', cx:483, cy:466, r:60, ipx:483, ipy:470 },
+  { id:'hottohall_card', cx:706, cy:300, r:58, ipx:706, ipy:376 },
 ];
 // ---------------------------------------------------------------------
 // Shared screen effects. These are all pure functions of performance.now()
@@ -1170,6 +1498,306 @@ function drawHottoRoom(){
 // WALLS as well as the floor (hence walking through walls), and the "table"
 // obstacle was authored ~85px below the actual table, parking a solid box
 // squarely in the kitchen doorway so the only way in was the wall seam.
+
+// ---- Elevator cabin (drawn in code; no plate for it yet) --------------
+// Three states drive the art: closed while travelling, open onto the lit
+// lobby, and open onto the dark third floor.
+const elevObstacles = [];
+const elevInteractables = [
+  { id:'elev_panel',  cx:742, cy:352, r:70, ipx:690, ipy:470 },
+  { id:'elev_doors',  cx:450, cy:598, r:78, ipx:450, ipy:520 },
+  { id:'elev_shoe',   cx:450, cy:636, r:64, ipx:450, ipy:556, hidden:()=>!(F.elevAt===3 && F.elevOpen) },
+];
+function drawElevatorRoom(){
+  const t=performance.now();
+  // cabin shell
+  ctx.fillStyle='#2b2018'; ctx.fillRect(150,120,600,560);
+  const wall=ctx.createLinearGradient(0,150,0,560);
+  wall.addColorStop(0,'#6d5236'); wall.addColorStop(.45,'#8a6a45'); wall.addColorStop(1,'#4c3925');
+  ctx.fillStyle=wall; ctx.fillRect(168,138,564,420);
+  // back-wall mirror panel
+  ctx.fillStyle='rgba(180,205,205,.13)'; ctx.fillRect(250,168,400,300);
+  ctx.strokeStyle='#c9a15f'; ctx.lineWidth=3; ctx.strokeRect(250,168,400,300);
+  ctx.fillStyle='rgba(255,236,200,.06)';
+  ctx.beginPath(); ctx.moveTo(262,180); ctx.lineTo(360,180); ctx.lineTo(262,300); ctx.closePath(); ctx.fill();
+  // ceiling light
+  drawLightPool(450,300,260,'255,214,150',0.22, F.elevStuck?7.5:0);
+  // handrail
+  ctx.strokeStyle='#c9a15f'; ctx.lineWidth=6; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(214,392); ctx.lineTo(686,392); ctx.stroke();
+  // floor
+  const fl=ctx.createLinearGradient(0,470,0,672);
+  fl.addColorStop(0,'#5a432c'); fl.addColorStop(1,'#3a2b1c');
+  ctx.fillStyle=fl; ctx.fillRect(168,468,564,204);
+  for(let i=0;i<7;i++){ ctx.strokeStyle='rgba(0,0,0,.20)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(168,486+i*28); ctx.lineTo(732,486+i*28); ctx.stroke(); }
+
+  // floor indicator
+  ctx.fillStyle='#12181c'; ctx.fillRect(392,146,116,34);
+  ctx.strokeStyle='#5d7a94'; ctx.lineWidth=2; ctx.strokeRect(392,146,116,34);
+  ctx.fillStyle= F.elevStuck ? '#e2662f' : '#8fe3c9';
+  ctx.font='bold 22px "Space Mono", monospace'; ctx.textAlign='center';
+  ctx.fillText(String(F.elevAt).padStart(2,'0'), 450, 171);
+  ctx.textAlign='left';
+
+  // call panel on the right wall
+  ctx.fillStyle='#2c2a26'; ctx.fillRect(700,250,86,210);
+  ctx.strokeStyle='#c9a15f'; ctx.lineWidth=2; ctx.strokeRect(700,250,86,210);
+  for(let i=0;i<20;i++){
+    const bx=712+(i%2)*34, by=262+Math.floor(i/2)*19;
+    const nfloor=i+1, lit = F.elevPressed.includes(nfloor);
+    ctx.beginPath(); ctx.arc(bx+8,by+7,7,0,Math.PI*2);
+    ctx.fillStyle = lit ? 'rgba(255,196,110,.95)' : 'rgba(120,110,96,.55)';
+    ctx.fill();
+    if(lit){ ctx.strokeStyle='rgba(255,214,150,.7)'; ctx.lineWidth=2; ctx.stroke(); }
+    ctx.fillStyle = lit ? '#2c2318' : 'rgba(232,220,200,.55)';
+    ctx.font='7px "Space Mono", monospace'; ctx.textAlign='center';
+    ctx.fillText(String(nfloor), bx+8, by+10); ctx.textAlign='left';
+  }
+
+  // the doors
+  const gap = F.elevOpen ? 150 : 4;
+  if(F.elevOpen){
+    // what is beyond them
+    if(F.elevAt===3){
+      ctx.fillStyle='#05070a'; ctx.fillRect(450-gap,470,gap*2,206);
+      const spill=ctx.createLinearGradient(0,470,0,676);
+      spill.addColorStop(0,'rgba(120,150,170,.10)'); spill.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=spill; ctx.fillRect(450-gap,470,gap*2,206);
+      // the shoe
+      ctx.save(); ctx.translate(450,636);
+      ctx.fillStyle='#7d1f38'; ctx.beginPath(); ctx.ellipse(0,0,17,8,-0.28,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#a83450'; ctx.beginPath(); ctx.ellipse(-5,-3,9,5,-0.28,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#5d1428'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(12,3); ctx.lineTo(20,13); ctx.stroke();
+      ctx.restore();
+      drawLightPool(450,636,58,'190,214,232',0.16,0);
+    } else {
+      ctx.fillStyle='#2c2117'; ctx.fillRect(450-gap,470,gap*2,206);
+      drawLightPool(450,600,120,'255,206,140',0.20,0);
+    }
+  }
+  ctx.fillStyle='#7a5f3d';
+  ctx.fillRect(168,470, (450-gap)-168, 206);
+  ctx.fillRect(450+gap,470, 732-(450+gap), 206);
+  ctx.strokeStyle='#3a2b1c'; ctx.lineWidth=3;
+  ctx.strokeRect(168,470,(450-gap)-168,206);
+  ctx.strokeRect(450+gap,470,732-(450+gap),206);
+  ctx.fillStyle='#c9a15f';
+  ctx.fillRect((450-gap)-10,540,6,60); ctx.fillRect(450+gap+4,540,6,60);
+
+  if(F.elevStuck){
+    ctx.save(); ctx.globalAlpha=0.25+0.25*Math.abs(Math.sin(t/180));
+    ctx.fillStyle='#000'; ctx.fillRect(150,120,600,560); ctx.restore();
+  }
+  drawVignette(0.34);
+}
+
+
+// =====================================================================
+// THE TWENTIETH FLOOR
+// One large map rather than a chain of small rooms: the patrols need a route
+// worth walking, and Lily has to be visible crossing a distance for her to
+// read as a person moving through the space rather than a spawn point.
+// World is ~2060x1160; the normal follow camera handles it.
+// =====================================================================
+const R = (x0,y0,x1,y1)=>[{x:x0,y:y0},{x:x1,y:y0},{x:x1,y:y1},{x:x0,y:y1}];
+const pentWalkable = [
+  R(  60,380,  430,690),   // lift lobby (safe)
+  R( 380,455, 1180,630),   // long corridor            — zone 1
+  R(1140,250, 1830,840),   // lounge                   — zone 2
+  R(1290, 55, 1580,290),   // side room (safe)         — zone 3
+  R(1355,235, 1490,300),   // side-room doorway
+  R(1780,250, 2010,1020),  // private hall             — zone 4
+  R(1430,860, 1830,1100),  // study
+  R( 400,930, 1470,1100),  // stairs corridor (safe)
+];
+const pentObstacles = [
+  // lounge columns
+  {x:1240,y:360,w:56,h:56},{x:1240,y:690,w:56,h:56},
+  {x:1690,y:360,w:56,h:56},{x:1690,y:690,w:56,h:56},
+  // lounge seating
+  {x:1370,y:430,w:190,h:70},{x:1370,y:620,w:190,h:70},
+  {x:1600,y:520,w:60,h:110},
+  // side room furniture
+  {x:1310,y:80,w:80,h:64},{x:1490,y:80,w:74,h:60},
+  // study
+  {x:1520,y:930,w:230,h:82},   // desk
+  {x:1450,y:1030,w:96,h:56},   // cabinet
+  // private hall console
+  {x:1930,y:520,w:64,h:120},
+];
+// Standing inside one of these means nothing can see Kot.
+const pentCover = [
+  {x: 60,y:380,w:370,h:310, safe:true},   // lift lobby
+  {x:1290,y: 55,w:290,h:235, safe:true},  // side room
+  {x: 400,y:930,w:1070,h:170, safe:true}, // stairs corridor
+  {x: 560,y:462,w:120,h:64},              // corridor niches
+  {x: 810,y:462,w:120,h:64},
+  {x:1050,y:462,w:110,h:64},
+  {x:1218,y:338,w:100,h:100},             // behind the lounge columns
+  {x:1218,y:668,w:100,h:100},
+  {x:1668,y:338,w:100,h:100},
+  {x:1668,y:668,w:100,h:100},
+  {x:1350,y:410,w:230,h:110},             // behind the sofas
+  {x:1350,y:600,w:230,h:110},
+  {x:1880,y:490,w:120,h:150},             // behind the private hall's console
+  {x:1800,y:800,w:150,h:130},             // recess before the study door
+  {x:1430,y:860,w:400,h:240, safe:true},  // the study itself
+];
+// Fixed cameras. `sweep` in radians, 0 = static.
+const pentCams = [
+  {x:1150,y:470, dir:Math.PI,        fov:0.62, range:430, sweep:0.00, period:1},
+  {x:1180,y:300, dir:Math.PI*0.30,   fov:0.66, range:470, sweep:0.55, period:8.5},
+  {x:1975,y:300, dir:Math.PI*0.5,    fov:0.60, range:430, sweep:0.34, period:7.0},
+];
+// Two patrols with a flashlight cone, walking loops.
+const pentPatrols = [
+  { npc:null, wp:[{x:520,y:545},{x:1080,y:545},{x:1080,y:545},{x:520,y:545}], i:0, speed:74, fov:0.55, range:300, pause:1.6, wait:0 },
+  { npc:null, wp:[{x:1250,y:330},{x:1740,y:330},{x:1900,y:640},{x:1900,y:900},{x:1740,y:760},{x:1250,y:760}], i:0, speed:66, fov:0.55, range:300, pause:1.2, wait:0 },
+];
+const pentCheckpoints = [
+  {x:220,y:560},{x:660,y:545},{x:1180,y:545},{x:1430,y:170},{x:1880,y:420},{x:1620,y:1000},{x:900,y:1010},
+];
+const pentInteractables = [
+  { id:'pent_lift',   cx:200, cy:430, r:70, ipx:200, ipy:520 },
+  { id:'pent_niche',  cx:620, cy:478, r:60, ipx:620, ipy:540 },
+  { id:'pent_note',   cx:1435,cy:120, r:70, ipx:1435,ipy:200, hidden:()=>F.noteFound },
+  { id:'pent_paint',  cx:1490,cy:268, r:66, ipx:1490,ipy:330 },
+  { id:'pent_mirror', cx:1985,cy:700, r:66, ipx:1930,ipy:700 },
+  { id:'pent_devices',cx:1630,cy:962, r:80, ipx:1630,ipy:1040, hidden:()=>F.hasDrive },
+  { id:'pent_photo',  cx:1478,cy:962, r:66, ipx:1478,ipy:1040, hidden:()=>!F.hasDrive || F.photoFound },
+  { id:'pent_stairs', cx:452, cy:1012,r:74, ipx:520, ipy:1012 },
+];
+
+function drawPenthouseRoom(){
+  const t=performance.now();
+  ctx.fillStyle='#070605'; ctx.fillRect(-200,-200,2600,1700);
+  // One dark structural slab under everything, so the floor reads as a single
+  // plan rather than lit islands floating in a void.
+  const slab=(x0,y0,x1,y1)=>{ ctx.fillStyle='#181109'; ctx.fillRect(x0-34,y0-34,(x1-x0)+68,(y1-y0)+68); };
+  slab( 60,380, 430,690); slab(380,455,1180,630); slab(1140,250,1830,840);
+  slab(1290, 55,1580,290); slab(1780,250,2010,1020); slab(1430,860,1830,1100);
+  slab(400,930,1470,1100);
+  const room=(x0,y0,x1,y1,floor,wall)=>{
+    ctx.fillStyle=wall; ctx.fillRect(x0-14,y0-14,(x1-x0)+28,(y1-y0)+28);
+    const g=ctx.createLinearGradient(0,y0,0,y1);
+    g.addColorStop(0,floor[0]); g.addColorStop(1,floor[1]);
+    ctx.fillStyle=g; ctx.fillRect(x0,y0,x1-x0,y1-y0);
+    // a hairline of light along the top edge gives the walls thickness
+    ctx.fillStyle='rgba(255,220,170,.07)'; ctx.fillRect(x0,y0,x1-x0,3);
+  };
+  room( 60,380, 430,690, ['#4a3a28','#332616'],'#241a12');
+  room(380,455,1180,630, ['#463625','#2e2215'],'#221910');
+  room(1140,250,1830,840,['#4e3c28','#33261a'],'#251b12');
+  room(1290,55,1580,290, ['#3f3427','#2a2117'],'#20180f');
+  room(1780,250,2010,1020,['#413124','#2a1f15'],'#211810');
+  room(1430,860,1830,1100,['#473524','#2f2317'],'#231a11');
+  room(400,930,1470,1100,['#3c2e20','#281d13'],'#1e1610');
+  // plank / tile grain
+  ctx.strokeStyle='rgba(0,0,0,.16)'; ctx.lineWidth=1;
+  for(let y=460;y<1100;y+=26){ ctx.beginPath(); ctx.moveTo(60,y); ctx.lineTo(2010,y); ctx.stroke(); }
+
+  // carpet runners — narrow, so they lead the eye instead of filling the room
+  const runner=(x,y,w,h)=>{
+    ctx.fillStyle='#2f3628'; ctx.fillRect(x,y,w,h);
+    ctx.strokeStyle='rgba(141,122,68,.55)'; ctx.lineWidth=2; ctx.strokeRect(x+6,y+6,w-12,h-12);
+    ctx.fillStyle='rgba(141,122,68,.10)'; ctx.fillRect(x+12,y+12,w-24,h-24);
+  };
+  runner(408,522,762,42); runner(1200,452,600,34); runner(438,1000,1000,40);
+  runner(1856,300,58,690);
+
+  // wainscot detail along the long corridor
+  for(let x=400;x<1180;x+=64){
+    ctx.fillStyle='rgba(0,0,0,.22)'; ctx.fillRect(x,455,58,16);
+  }
+  // niches
+  for(const nx of [560,810,1050]){
+    ctx.fillStyle='#1b140d'; ctx.fillRect(nx,440,120,34);
+    ctx.strokeStyle='#6d5836'; ctx.lineWidth=2; ctx.strokeRect(nx,440,120,34);
+    drawLightPool(nx+60,486,74,'255,196,120',0.10,0);
+  }
+  // lounge columns
+  for(const [cx0,cy0] of [[1240,360],[1240,690],[1690,360],[1690,690]]){
+    ctx.fillStyle='#5a4830'; ctx.fillRect(cx0,cy0,56,56);
+    ctx.fillStyle='#7a643f'; ctx.fillRect(cx0+6,cy0+6,44,10);
+    ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fillRect(cx0,cy0+46,56,10);
+  }
+  // sofas
+  for(const [sx0,sy0] of [[1370,430],[1370,620]]){
+    ctx.fillStyle='#4a3550'; ctx.fillRect(sx0,sy0,190,70);
+    ctx.fillStyle='#5d4364'; ctx.fillRect(sx0+8,sy0+8,174,34);
+    ctx.fillStyle='#2f2135'; ctx.fillRect(sx0,sy0+58,190,12);
+  }
+  ctx.fillStyle='#3b3040'; ctx.fillRect(1600,520,60,110);
+
+  // side room: desk with the note
+  ctx.fillStyle='#5b4a30'; ctx.fillRect(1310,80,80,64);
+  ctx.fillStyle='#4a3c28'; ctx.fillRect(1490,80,74,60);
+  if(!F.noteFound){ ctx.fillStyle='#efe3c6'; ctx.fillRect(1424,104,26,20);
+    ctx.strokeStyle='#8d7a44'; ctx.lineWidth=1; ctx.strokeRect(1424,104,26,20); }
+  // the painting on the lounge's north wall
+  ctx.fillStyle='#3a2a1c'; ctx.fillRect(1452,244,78,58);
+  ctx.fillStyle= F.sawPainting ? '#6d3038' : '#5c6b4e'; ctx.fillRect(1458,250,66,46);
+  ctx.strokeStyle='#c9a15f'; ctx.lineWidth=2; ctx.strokeRect(1452,244,78,58);
+  // the private hall's recesses — the two places to wait out the camera
+  ctx.fillStyle='#2a1f16'; ctx.fillRect(1880,490,120,150);
+  ctx.fillStyle='#37291c'; ctx.fillRect(1888,498,104,134);
+  ctx.fillStyle='#2a1f16'; ctx.fillRect(1800,800,150,130);
+  ctx.fillStyle='#37291c'; ctx.fillRect(1808,808,134,114);
+  // the private hall's mirror
+  ctx.fillStyle='#26313a'; ctx.fillRect(1972,660,30,86);
+  ctx.fillStyle='rgba(180,205,215,.20)'; ctx.fillRect(1976,666,22,74);
+
+  // study fittings
+  ctx.fillStyle='#5a4530'; ctx.fillRect(1520,930,230,82);
+  ctx.fillStyle='#3d2f20'; ctx.fillRect(1450,1030,96,56);
+  if(!F.hasDrive){
+    const marks=['#9aa6ad','#6f7d86','#9aa6ad','#7d6a52'];
+    for(let i=0;i<4;i++){
+      ctx.fillStyle=marks[i]; ctx.fillRect(1548+i*46,952,26,12);
+      if(i===2){ ctx.fillStyle='#3f8fd0'; ctx.fillRect(1548+i*46,952,7,12); }
+    }
+  }
+  if(F.hasDrive && !F.photoFound){
+    ctx.fillStyle='#e8dcc2'; ctx.fillRect(1462,946,44,34);
+    ctx.strokeStyle='#8d7a44'; ctx.lineWidth=2; ctx.strokeRect(1462,946,44,34);
+  }
+  // stairs door
+  ctx.fillStyle='#2b2018'; ctx.fillRect(418,962,62,100);
+  ctx.strokeStyle='#c9a15f'; ctx.lineWidth=3; ctx.strokeRect(418,962,62,100);
+  ctx.fillStyle='#c9a15f'; ctx.beginPath(); ctx.arc(468,1014,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#8fe3c9'; ctx.font='bold 12px Nunito'; ctx.textAlign='center';
+  ctx.fillText('ЛЕСТНИЦА',449,952); ctx.textAlign='left';
+
+  // lift doors back at the west end
+  ctx.fillStyle='#3a2c20'; ctx.fillRect(150,388,104,84);
+  ctx.strokeStyle='#c9a15f'; ctx.lineWidth=2; ctx.strokeRect(150,388,104,84);
+
+  // ambient light: this floor is expensively but sparsely lit
+  drawLightPool(240,520,190,'255,206,150',0.13,0);
+  drawLightPool(1470,540,330,'255,200,146',0.11,0);
+  drawLightPool(1890,640,200,'190,206,232',0.10,0);
+  drawLightPool(1630,980,200,'255,196,130',0.13,0);
+  drawLightPool(900,1010,220,'188,206,226',0.09,0);
+  drawLightPool(1435,150,180,'255,214,160',0.12,0);
+
+  // the hallucination that doubles the corridor, once
+  if(F.hallDoubleUntil && t < F.hallDoubleUntil){
+    const k = Math.max(0, Math.min(1, (F.hallDoubleUntil - t)/2600));
+    const off = 96*k;
+    ctx.save(); ctx.globalAlpha = 0.42*k;
+    // a second corridor, sliding out of the first
+    ctx.fillStyle='#463625'; ctx.fillRect(400+off,455,780,175);
+    for(const nx of [560,810,1050]){
+      ctx.fillStyle='#1b140d'; ctx.fillRect(nx+off,440,120,34);
+      ctx.strokeStyle='#6d5836'; ctx.lineWidth=2; ctx.strokeRect(nx+off,440,120,34);
+    }
+    ctx.fillStyle='rgba(200,220,240,.16)'; ctx.fillRect(400+off,500,762,42);
+    ctx.restore();
+  }
+}
+
 const innerWalkable = [
   [{x:322,y:152},{x:700,y:152},{x:700,y:226},{x:521,y:226},{x:521,y:352},
    {x:818,y:352},{x:818,y:474},{x:420,y:474},{x:420,y:545},{x:530,y:545},
@@ -1223,6 +1851,11 @@ const ROOMS = {
  sora:{bounds:{x0:20,x1:880,y0:20,y1:668},walkable:[[{x:30,y:215},{x:870,y:215},{x:870,y:668},{x:30,y:668}],[{x:260,y:145},{x:385,y:145},{x:385,y:215},{x:260,y:215}]],obstacles:soraObstacles,draw:drawSoraRoom,interactables:soraInteractables},
  hotto:{bounds:{x0:62,x1:838,y0:205,y1:646},walkable:[{x:80,y:205},{x:820,y:205},{x:850,y:650},{x:55,y:650}],obstacles:hottoObstacles,draw:drawHottoRoom,interactables:hottoInteractables},
  hottohall:{bounds:{x0:30,x1:885,y0:200,y1:510},walkable:[{x:45,y:330},{x:875,y:330},{x:875,y:437},{x:598,y:437},{x:598,y:498},{x:367,y:498},{x:367,y:437},{x:45,y:437}],obstacles:hottohallObstacles,draw:drawHottoHallRoom,interactables:hottohallInteractables},
+ elevator:{bounds:{x0:150,x1:750,y0:120,y1:680},
+   walkable:[{x:214,y:474},{x:686,y:474},{x:686,y:648},{x:214,y:648}],
+   obstacles:elevObstacles,draw:drawElevatorRoom,interactables:elevInteractables},
+ penthouse:{bounds:{x0:40,x1:2040,y0:40,y1:1120},
+   walkable:pentWalkable,obstacles:pentObstacles,draw:drawPenthouseRoom,interactables:pentInteractables},
  inner:{bounds:{x0:30,x1:870,y0:20,y1:665},walkable:innerWalkable,obstacles:innerObstacles,draw:drawInnerRoom,interactables:innerInteractables},
 };
 
@@ -1233,6 +1866,8 @@ auditInteractionPoints();
 // from the room entrance. If an authored point is inside furniture or a blocked
 // pocket, choose the nearest reachable valid position around the object.
 function roomEntry(roomId){
+  if(roomId==='elevator') return {x:450,y:560};
+  if(roomId==='penthouse') return {x:220,y:560};
   if(roomId==='corridor') return {x:430,y:430};
   if(roomId==='sora') return {x:650,y:605};
   if(roomId==='inner') return {x:780,y:400};
@@ -1537,9 +2172,13 @@ function soraVestibuleSequence(){
 }
 
 function soraVestibuleIdle(){
+  if(F.penthouseDone && !F.chapterDone){ chapterFinale(); return; }
   if(F.hottoSceneDone && !F.finalTalkDone){
     finalSoraSequence();
     return;
+  }
+  if(F.choiceMade==='help' && !F.penthouseDone){
+    startDialogue([ L('sora','Четвёртый этаж. Не выше.') ], null); return;
   }
   let line;
   if(!F.hasKey && !F.keyDelivered) line = 'Ключ у меня в квартире. Справа от рабочего стола, если не потерялся.';
@@ -1608,11 +2247,63 @@ function finalSoraSequence(){
   runSequence(steps, ()=>{
     F.finalTalkDone = true;
     updateQuestUI();
-    setTimeout(showEnding, 900);
+    setTimeout(soraSecondErrand, 700);
   });
 }
 
-function showEnding(){
+// ---- The offer, and the choice the chapter turns on -------------------
+function soraSecondErrand(){
+  runSequence([
+    { type:'dialogue', lines:[
+      L('sora','Ты нормально себя чувствуешь?'),
+      L('kot','Да.','normal'),
+      L('sora','Точно?'),
+      L('kot','Просто давно не ел.','normal'),
+      L('sora','Габи бы тебе сейчас лекцию прочитала.'),
+      L('kot','Не надо её звать.','normal'),
+      L('sora','Не собирался.'),
+      L('sora','Можешь идти домой.'),
+      L('sora','Хотя... есть ещё одно дело.'),
+      L('kot','Что ещё?','normal'),
+      L('sora','На четвёртом этаже у жильца заклинило дверь. Я обещал занести запасной ключ.'),
+      L('kot','И не можешь уйти со стойки.','normal'),
+      L('sora','И не могу уйти со стойки.'),
+      L('kot','Далеко?','normal'),
+      L('sora','Нет.'),
+      L('sora','И, Кот... не поднимайся выше четвёртого.'),
+      L('kot','Почему?','normal'),
+      L('sora','Потому что я тебя прошу.'),
+    ]},
+    { type:'fn', fn:()=>{
+      showChoice('Уже поздно, и голова всё ещё тяжёлая.', ['Помочь Соре','Пойти домой'], (i)=>{
+        if(i===0){
+          F.choiceMade='help'; F.hasKey=true; updateQuestUI();
+          toast('Запасной ключ — в инвентаре. Четвёртый этаж.');
+          startDialogue([
+            L('kot','Ладно. Давай ключ.','normal'),
+            L('sora','Держи.'),
+            L('kot','Четвёртый.','normal'),
+            L('sora','Четвёртый.'),
+          ], null);
+        } else {
+          F.choiceMade='home'; updateQuestUI();
+          startDialogue([
+            L('kot','Я всё-таки домой.','normal'),
+            L('sora','Напиши, когда доберёшься.'),
+            L('kot','Напишу.','normal'),
+            L('sora','Хорошо.'),
+          ], ()=>setTimeout(()=>showEnding('Глава 1. Конец'), 800));
+        }
+      });
+    }},
+  ], null);
+}
+
+function showEnding(title){
+  if(title){
+    const h=endingScreen.querySelector('h1');
+    if(h) h.textContent = title;
+  }
   endingScreen.classList.add('visible');
 }
 
@@ -1648,18 +2339,33 @@ function examineSora(id){
     startDialogue(foundLine, null);
     return;
   }
-  // wrong guesses
+  // Searching. The nightstand does not exist for the player until he has
+  // actually looked in a few wrong places — the key is found by searching,
+  // not by walking straight to the one lit marker.
   const flavor = {
     sora_desk:'Даже дома работа.',
     sora_monitor:'Он даже здесь за всеми смотрит.',
     sora_wardrobe:'Если ключ здесь, я его переоценил.',
     sora_bed:'Хотя бы спит нормально.',
   }[id];
-  if(!F.hasKey){
+  if(!flavor) return;
+  const first = !F.searched_[id];
+  if(first) F.searched_[id]=true;
+  if(!F.hasKey && first){
+    F.soraSearched++;
     F.keyWrongTries++;
-    if(F.keyWrongTries === 2){
-      startDialogue([ L('kot', flavor, 'normal'), L('sora','Он всегда оставляет рабочие вещи справа от стола.') ], null);
-      return;
+    if(F.soraSearched===2){
+      startDialogue([ L('kot', flavor, 'normal'),
+                      L('kot','Не здесь.','normal'),
+                      L('sora','Справа от стола смотрел?') ], null);
+      updateQuestUI(); return;
+    }
+    if(F.soraSearched===3){
+      startDialogue([ L('kot', flavor, 'normal'),
+                      L('kot','...Справа от стола.','normal'),
+                      L('kot','Тумба. Ну конечно.','normal') ],
+                    ()=>{ updateQuestUI(); toast('Тумба у кровати — стоит проверить.'); });
+      updateQuestUI(); return;
     }
   }
   startDialogue([ L('kot', flavor, 'normal') ], null);
@@ -1676,7 +2382,15 @@ function examineCorridor(id){
   if(id==='corr_board'){startDialogue([L('kot','Объявления. Ничего особенного.','normal')],null);return;}
   if(id==='corr_plant'){startDialogue([L('kot','Живой. Уже достижение для этого места.','normal')],null);return;}
   if(id==='corr_couch'){startDialogue([L('kot','Неплохой диван. Жаль, я сюда не отдыхать пришёл.','normal')],null);return;}
-  if(id==='corr_elevator'){startDialogue([L('kot','Ого, тут даже лифт есть. Этого стоило ожидать.','normal')],null);return;}
+  if(id==='corr_elevator'){
+    if(F.choiceMade==='help' && !F.penthouseDone){
+      playDoorSound();
+      F.elevAt=1; F.elevOpen=true; F.elevPressed=[];
+      switchRoom('elevator',450,560,'up');
+      return;
+    }
+    startDialogue([L('kot','Ого, тут даже лифт есть. Этого стоило ожидать.','normal')],null);return;
+  }
   if(id==='corr_door103'){startDialogue([L('kot','Квартира 103. Тоже чья-то.','normal')],null);return;}
   if(id==='corr_door101'){playDoorSound();switchRoom('sora',650,605,'up');return;}
   if(id==='corr_door104'){
@@ -1705,6 +2419,7 @@ function hottoDeliverySequence(){
       L('kot','А мне, значит, откроет.','normal'),
       L('hotto','Тебе — да.'),
     ]},
+    {type:'fn', fn:()=>{ F.hasLetter=true; updateQuestUI(); toast('Письмо для Соры — в инвентаре.'); }, wait:400},
   ],()=>{
     F.hasKey=false; F.keyDelivered=true; F.hottoInspectQuest=true; F.hottoIntroDone=true;
     F.optionalReminder=true;
@@ -1748,6 +2463,32 @@ function gabiCallTwo(){
       L('kot','Хорошо.','phone'),
     ]},
   ], ()=>{ F.gabiCall2Done = true; F.hottoHallUnlocked = true; updateQuestUI(); });
+}
+
+// The card call. Gabi stops being just the worried sister here.
+function gabiCardCall(){
+  if(F.cardCallDone) return;
+  F.cardCallDone = true;
+  runSequence([
+    { type:'fn', fn:()=>playPhoneRing(), wait:1750 },
+    { type:'dialogue', lines:[
+      Object.assign(L('gabi','Ты ещё там?'),{phone:true,emotion:'phone'}),
+      L('kot','Да.','phone'),
+      Object.assign(L('gabi','Тогда заканчивай и возвращайся.'),{phone:true,emotion:'phone'}),
+      L('kot','Я тут кое-что нашёл.','phone'),
+      Object.assign(L('gabi','Что.'),{phone:true,emotion:'phone'}),
+      L('kot','Карту. Металлическую. С номером двадцать четыре.','phone'),
+      Object.assign(L('gabi','...'),{phone:true,emotion:'phone'}),
+      L('kot','Габи?','phone'),
+      Object.assign(L('gabi','У тебя её нет. Хорошо?'),{phone:true,emotion:'phone'}),
+      L('kot','Что?','phone'),
+      Object.assign(L('gabi','Просто не трогай чужие вещи.'),{phone:true,emotion:'phone'}),
+      L('kot','Ты опять знаешь больше меня.','phone'),
+      Object.assign(L('gabi','Так и есть.'),{phone:true,emotion:'phone'}),
+      L('kot','Габи.','phone'),
+      Object.assign(L('gabi','Иди к Соре, Кот.'),{phone:true,emotion:'phone'}),
+    ]},
+  ], ()=>updateQuestUI());
 }
 
 function examineHotto(id){
@@ -1854,9 +2595,24 @@ function examineInner(id){
 // =====================================================================
 function triggerInteractable(id){
   if(currentRoomId==='corridor'){examineCorridor(id);return;}
-  if(currentRoomId==='sora'){if(id==='sora_exit_lobby'){playDoorSound();switchRoom('corridor',255,258,'down');return;} if(id==='sora_exit_inner'){playDoorSound();F.innerDoorSeen=true;updateQuestUI();foggedRoomTransition('inner',780,400,'left',[L('kot','Что-то мне нехорошо...','normal'),L('kot','Голова закружилась...','normal')]);return;} examineSora(id);return;}
+  if(currentRoomId==='sora'){if(id==='sora_exit_lobby'){
+      // After the attack he is in no state to walk anywhere. This is the beat
+      // that pushes the player through the bathroom and into the Gabi vision.
+      if(F.soraHeadacheDone && !F.innerPillsTaken && !F.hottoSceneDone){
+        startDialogue([
+          L('kot','...Нет.','normal'),
+          L('kot','Сначала таблетки.','normal'),
+          L('kot','Иначе я до сто четвёртой не дойду.','normal'),
+          L('kot','Соседняя дверь. Кухня и ванная.','normal'),
+        ], null);
+        return;
+      }
+      playDoorSound();switchRoom('corridor',255,258,'down');return;
+    } if(id==='sora_exit_inner'){playDoorSound();F.innerDoorSeen=true;updateQuestUI();foggedRoomTransition('inner',780,400,'left',[L('kot','Что-то мне нехорошо...','normal'),L('kot','Голова закружилась...','normal')]);return;} examineSora(id);return;}
   if(currentRoomId==='hotto'){if(id==='hotto_exit'){playDoorSound();switchRoom('corridor',827,320,'down');return;} examineHotto(id);return;}
   if(currentRoomId==='hottohall'){examineHottoHall(id);return;}
+  if(currentRoomId==='elevator'){examineElevator(id);return;}
+  if(currentRoomId==='penthouse'){examinePenthouse(id);return;}
   if(currentRoomId==='inner'){examineInner(id);return;}
 }
 
@@ -1873,6 +2629,478 @@ function switchRoomToHottoHall(){
     ], ()=>{ F.hottoHallVisionSeen = true; stopHeartbeat(); }), 450);
   }
 }
+// =====================================================================
+// THE LIFT
+// =====================================================================
+function elevSetDoors(open){ F.elevOpen = open; }
+function elevRideTo(target, onArrive, stopAt){
+  cutsceneActive = true;
+  elevSetDoors(false);
+  playDoorSound();
+  const step = ()=>{
+    if(currentRoomId!=='elevator'){ cutsceneActive=false; return; }
+    const dir = target > F.elevAt ? 1 : -1;
+    F.elevAt += dir;
+    playTalkBlip('sora');
+    if(stopAt && F.elevAt===stopAt){ cutsceneActive=false; onArrive(); return; }
+    if(F.elevAt===target){ cutsceneActive=false; onArrive(); return; }
+    setTimeout(step, 900);
+  };
+  setTimeout(step, 1100);
+}
+
+function elevatorFloorThree(){
+  F.elevStuck = true;
+  playDreadStinger();
+  setTimeout(()=>{
+    F.elevStuck = false;
+    elevSetDoors(true);
+    playDoorSound();
+    updateQuestUI();
+    startDialogue([
+      L('kot','...Это не четвёртый.','normal'),
+      L('kot','Третий.','normal'),
+      L('kot','На третьем обычно светло.','normal'),
+    ], ()=>{ F.floor3Ready = true; scheduleLilyBurstIn(); });
+  }, 1400);
+}
+
+// She arrives on a timer whether or not the player pokes around, but she
+// really runs in: a path from outside the doors to the middle of the cabin.
+let lilyBurstTimer = null;
+function scheduleLilyBurstIn(){
+  clearTimeout(lilyBurstTimer);
+  lilyBurstTimer = setTimeout(()=>{
+    if(currentRoomId!=='elevator' || F.lilyMet) return;
+    lilyBurstIn();
+  }, 6500);
+}
+function lilyBurstIn(){
+  if(F.lilyMet) return;
+  F.lilyMet = true;
+  clearTimeout(lilyBurstTimer);
+  cutsceneActive = true;
+  npcPlace(lily, 'elevator', 452, 760, 'up');
+  playFootstep();
+  npcWalk(lily, [{x:452,y:640},{x:520,y:560},{x:560,y:520}], 260, ()=>{
+    lily.facing='left';
+    startDialogue([
+      L('lily','Закрой! Быстрее!'),
+      L('kot','Эй! Вы что—','normal'),
+      L('lily','Тише!'),
+    ], ()=>{
+      elevSetDoors(false); playDoorSound();
+      npcWalk(lily, [{x:640,y:500}], 200, ()=>{
+        lily.facing='right';
+        F.elevPressed = [4,7,9,11,14,16,18,20];
+        playTalkBlip('sora');
+        startDialogue([
+          L('kot','Вы хоть понимаете, куда нас отправили?','normal'),
+          L('lily','Куда-нибудь подальше.'),
+          L('kot','А конкретнее?','normal'),
+          L('lily','Я нажала всё.'),
+          L('kot','Я заметил.','normal'),
+          L('kot','Кто вы вообще?','normal'),
+          L('lily','Лили. Лили-Роуз, если хотите официально.','smile'),
+          L('kot','Кот.','normal'),
+          L('lily','Enchantée.','smile'),
+          L('kot','Я не знаю французский.','normal'),
+          L('lily','Приятно познакомиться.','smile'),
+          L('kot','А. Взаимно.','normal'),
+          L('kot','От кого вы убегаете?','normal'),
+          L('lily','От моего костюмера.'),
+          L('kot','Он настолько страшный?','normal'),
+          L('lily','Он хочет надеть на меня платье из битого стекла.'),
+          L('kot','...А.','normal'),
+          L('lily','Вот именно. А он говорит, что это искусство.'),
+          L('kot','А вы что говорите?','normal'),
+          L('lily','Что я предпочитаю одежду, которая меня не режет.'),
+          L('kot','Звучит разумно.','normal'),
+          L('lily','Merci.','smile'),
+          L('kot','Это что значит?','normal'),
+          L('lily','Спасибо.','smile'),
+          L('kot','Вы модель?','normal'),
+          L('lily','Да. Единственная профессия, где сначала просят улыбнуться, а потом предлагают умереть ради фотографии.'),
+          L('kot','Суровая работа.','normal'),
+          L('lily','Очень.'),
+          L('lily','А ты здесь живёшь?'),
+          L('kot','Нет. Я к брату.','normal'),
+          L('lily','Поняла.'),
+          L('kot','А ты?','normal'),
+          L('lily','Я здесь работаю. Ну... иногда.'),
+          L('kot','В смысле?','normal'),
+          L('lily','Это длинная история.'),
+        ], ()=>{
+          npcWalk(lily,[{x:600,y:530}],140,null);
+          elevRideTo(20, ()=>{
+            startDialogue([
+              L('kot','Почему мы до сих пор едем?','normal'),
+              L('lily','Потому что я в панике.'),
+              L('kot','Сильный план.','normal'),
+              L('lily','Спасибо.','smile'),
+            ], ()=>{
+              elevSetDoors(true); playDoorSound();
+              setTimeout(()=>enterPenthouse(), 900);
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
+
+// =====================================================================
+// TWENTIETH FLOOR — SCRIPT
+// =====================================================================
+function enterPenthouse(){
+  F.penthouseReached = true;
+  switchRoom('penthouse', 220, 560, 'right');
+  npcPlace(lily,'penthouse', 300, 600, 'right');
+  cutsceneActive = true;
+  setTimeout(()=>{
+    startDialogue([
+      L('kot','Двадцатый.','normal'),
+      L('kot','Сора просил не подниматься выше четвёртого.','normal'),
+      L('lily','Формально ты и не поднимался. Тебя привезли.','smile'),
+      L('kot','Это не работает.','normal'),
+      L('lily','Иногда работает.'),
+      L('lily','Тише...'),
+    ], ()=>{
+      // Anmi appears at a distance. He is never a threat you fight — he is
+      // the reason everyone is running.
+      npcPlace(anmi,'penthouse', 1120, 330, 'left');
+      npcWalk(anmi,[{x:980,y:400}],90,null);
+      playThunder();
+      startDialogue([
+        L('anmi','Лили! Дорогая!'),
+        L('lily','О нет.'),
+        L('anmi','Ты не можешь всё время убегать от искусства!'),
+        L('lily','Именно это я и собираюсь делать.'),
+        L('lily','Слушай. Я оставила сумку в пентхаусе.'),
+        L('kot','У кого?','normal'),
+        L('lily','У хозяина этажа.'),
+        L('kot','Это уже звучит плохо.','normal'),
+        L('lily','В сумке моя флешка. Мне она нужна.'),
+        L('kot','А почему не зайдёшь сама?','normal'),
+        L('lily','Потому что я сейчас пользуюсь своими преимуществами.'),
+        L('kot','Какими?','normal'),
+        L('lily','Я бегаю быстрее.','smile'),
+      ], ()=>{
+        // She runs, he follows her with his eyes, and the floor goes live.
+        npcWalk(lily,[{x:700,y:545},{x:1160,y:545},{x:1500,y:330}],250,()=>{ lily.visible=false; });
+        npcWalk(anmi,[{x:1160,y:420},{x:1500,y:380}],120,()=>{ anmi.visible=false; });
+        setTimeout(()=>{
+          cutsceneActive = false;
+          F.stealthOn = true;
+          ST.checkpoint = {x:220,y:560};
+          for(let i=0;i<pentPatrols.length;i++){
+            const g = i===0 ? guardA : guardB;
+            pentPatrols[i].npc = g;
+            npcPlace(g,'penthouse', pentPatrols[i].wp[0].x, pentPatrols[i].wp[0].y,'right');
+            pentPatrols[i].i = 1; pentPatrols[i].wait = 1.2 + i*1.4; pentPatrols[i].dir = 0;
+          }
+          lilyNextRun();
+          updateQuestUI();
+          startDialogue([
+            L('kot','Она правда бегает быстрее меня.','normal'),
+            L('kot','Ладно.','normal'),
+            L('kot','Камеры. Двое с фонарями.','normal'),
+            L('kot','Ниши, колонны, диваны. Где темно — там меня нет.','normal'),
+          ], ()=>toast('Прячьтесь в нишах и за мебелью. Кабинет — в юго-восточном углу.'));
+        }, 1500);
+      });
+    });
+  }, 700);
+}
+
+function examinePenthouse(id){
+  if(id==='pent_lift'){
+    startDialogue([ L('kot','Лифт не открывается.','normal'), L('kot','Обратно — только лестницей.','normal') ], null); return;
+  }
+  if(id==='pent_niche'){
+    if(!F.sawDoubleHall){
+      F.sawDoubleHall = true;
+      F.hallDoubleUntil = performance.now()+2600;
+      playHeadachePang();
+      startDialogue([
+        L('kot','Ниша. Тут меня не видно.','normal'),
+        L('kot','...','normal'),
+        L('kot','Коридор только что был длиннее.','normal'),
+        L('kot','И дверей было две.','normal'),
+        L('kot','Моргнул — одна.','normal'),
+        L('kot','Хорошо. Просто иди.','normal'),
+      ], null);
+      return;
+    }
+    startDialogue([ L('kot','Тут можно переждать.','normal') ], null); return;
+  }
+  if(id==='pent_note'){
+    F.noteFound = true; updateQuestUI();
+    startDialogue([
+      L('kot','Записка. Чужой почерк.','normal'),
+      L('kot','«Серебряная. С синей меткой.»','normal'),
+      L('kot','Спасибо, кто бы ты ни был.','normal'),
+    ], ()=>toast('Флешка: серебряная, с синей меткой.'));
+    return;
+  }
+  if(id==='pent_paint'){
+    if(!F.sawPainting){
+      F.sawPainting = true;
+      playDreadStinger();
+      startDialogue([
+        L('kot','Портрет. Кто-то в парадном.','normal'),
+        L('kot','...','normal'),
+        L('kot','Нет.','normal'),
+        L('kot','У него было моё лицо. И кровь из носа.','normal'),
+        L('kot','Сейчас — не моё. Обычное чужое лицо.','normal'),
+        L('kot','Я не буду на это смотреть.','normal'),
+      ], null);
+      return;
+    }
+    startDialogue([ L('kot','Больше не смотрю.','normal') ], null); return;
+  }
+  if(id==='pent_mirror'){
+    if(!F.sawMirror){
+      F.sawMirror = true;
+      playHeadachePang();
+      startDialogue([
+        L('kot','Шаги.','normal'),
+        L('kot','...Позади.','normal'),
+        L('kot','Никого.','normal'),
+        L('kot','Теперь впереди.','normal'),
+        L('kot','Зеркало.','normal'),
+        L('kot','Я там старше. И глаза пустые.','normal'),
+        L('kot','Это не сегодня. Это когда-нибудь.','normal'),
+      ], null);
+      return;
+    }
+    startDialogue([ L('kot','Я туда больше не смотрю.','normal') ], null); return;
+  }
+  if(id==='pent_devices'){
+    if(!F.noteFound){
+      startDialogue([
+        L('kot','Четыре штуки. Все похожи.','normal'),
+        L('kot','Я не знаю, какая её.','normal'),
+        L('kot','Надо было спросить.','normal'),
+      ], null);
+      return;
+    }
+    driveMinigame(); return;
+  }
+  if(id==='pent_photo'){ oldPhotoScene(); return; }
+  if(id==='pent_stairs'){
+    if(!F.hasDrive){
+      startDialogue([ L('kot','Не с пустыми руками.','normal'), L('kot','Она просила флешку.','normal') ], null); return;
+    }
+    if(!F.lanTalked){
+      startDialogue([ L('kot','Сначала — фотография.','normal') ], null); return;
+    }
+    stairsFarewell(); return;
+  }
+}
+
+// Пять устройств, одно серебряное с синей меткой.
+function driveMinigame(){
+  const opts = ['Матовое, серое','Серебряное, с синей меткой','Серебряное, без метки','Тёмное, с царапиной'];
+  showChoice('На столе четыре одинаковых на вид устройства.', opts, (i)=>{
+    if(i===1){
+      F.hasDrive = true; F.driveFound = true; updateQuestUI();
+      toast('Флешка — в инвентаре.');
+      startDialogue([ L('kot','Вот она.','normal'), L('kot','Серебряная. Синяя метка.','normal') ],
+        ()=>toast('Рядом лежит старая фотография.'));
+    } else {
+      startDialogue([ L('kot','Не эта.','normal'), L('kot','«Серебряная. С синей меткой.»','normal') ], null);
+    }
+  });
+}
+
+function oldPhotoScene(){
+  F.photoFound = true;
+  runSequence([
+    { type:'dialogue', lines:[
+      L('kot','Фотография. Старая.','normal'),
+      L('kot','Это... мама.','normal'),
+      L('kot','Папа.','normal'),
+      L('kot','Сора. Совсем молодой.','normal'),
+      L('kot','Габи. Ей тут лет пять.','normal'),
+      L('kot','И я.','normal'),
+      L('kot','А этот кто?','normal'),
+      L('kot','На обороте: «До того, как вода пришла.»','normal'),
+    ]},
+    { type:'fn', fn:()=>{
+      npcPlace(lanZ,'penthouse', 1790, 900, 'left');
+      npcWalk(lanZ,[{x:1700,y:960}],95,null);
+      playDoorSound();
+    }, wait:1400},
+    { type:'dialogue', lines:[
+      L('lan','Вы нашли фотографию.'),
+      L('kot','Вы Лань Чжань?','normal'),
+      L('lan','Да.'),
+      L('kot','Я не хотел сюда приходить.','normal'),
+      L('lan','Это заметно.'),
+      L('kot','Вы знали моих родителей?','normal'),
+      L('lan','Знал.'),
+      L('kot','Давно?','normal'),
+      L('lan','Достаточно.'),
+      L('kot','Что они здесь делали?','normal'),
+      L('lan','Пытались сохранить то, что ещё можно было сохранить.'),
+      L('kot','Что?','normal'),
+      L('lan','Это зависит от того, что именно ты ищешь.'),
+      L('kot','Я не знаю.','normal'),
+      L('lan','Тогда начни с дома.'),
+      L('kot','Откуда вы знаете про мой дом?','normal'),
+      L('lan','Я много чего знаю.'),
+      L('kot','Флешка вам не нужна?','normal'),
+      L('lan','Если бы была нужна, ты бы её не держал.'),
+    ]},
+  ], ()=>{
+    F.lanTalked = true; F.stealthOn = false; updateQuestUI();
+    for(const p of pentPatrols){ if(p.npc) p.npc.visible=false; }
+    toast('Лестница — в конце западного коридора.');
+    setTimeout(()=>{
+      npcPlace(lily,'penthouse', 1500, 1010, 'left');
+      npcWalk(lily,[{x:1660,y:1000}],230,()=>{
+        startDialogue([
+          L('lily','Кот!'),
+          L('kot','Нашёл.','normal'),
+          L('lily','Magnifique.','smile'),
+          L('kot','Это опять французский.','normal'),
+          L('lily','Да.','smile'),
+          L('kot','Что значит?','normal'),
+          L('lily','Что нам пора.'),
+          L('anmi','Лили! Я наконец-то придумал, как закрепить стекло!'),
+          L('lily','Бежим.'),
+        ], ()=>{
+          npcWalk(lily,[{x:900,y:1010},{x:560,y:1012}],240,()=>{ lily.facing='right'; });
+        });
+      });
+    }, 900);
+  });
+}
+
+function stairsFarewell(){
+  cutsceneActive = true;
+  npcPlace(lily,'penthouse', 560, 1012, 'right');
+  runSequence([
+    { type:'dialogue', lines:[
+      L('lily','Спасибо.'),
+      L('kot','За что?','normal'),
+      L('lily','За то, что не спросил, почему я вообще здесь.'),
+      L('kot','Я сегодня сам не понимаю, где должен быть.','normal'),
+      L('lily','Alors, nous sommes quittes.','smile'),
+      L('kot','Перевод?','normal'),
+      L('lily','Теперь квиты.','smile'),
+      L('kot','Понял.','normal'),
+      L('lily','Было приятно познакомиться.','smile'),
+      L('kot','Тебе тоже.','normal'),
+    ]},
+    { type:'fn', fn:()=>{
+      npcWalk(lily,[{x:452,y:1012}],200,()=>{ lily.visible=false; playDoorSound(); });
+    }, wait:1500},
+  ], ()=>{
+    F.penthouseDone = true;
+    canvas.classList.add('fogged');
+    setTimeout(()=>{
+      cutsceneActive = false;
+      switchRoom('corridor', 450, 300, 'down');
+      updateQuestUI();
+      setTimeout(()=>canvas.classList.remove('fogged'), 700);
+      setTimeout(()=>startDialogue([
+        L('kot','Первый этаж.','normal'),
+        L('kot','Как будто ничего и не было.','normal'),
+      ], null), 900);
+    }, 1100);
+  });
+}
+
+// ---------- the real ending ----------
+function chapterFinale(){
+  runSequence([
+    { type:'dialogue', lines:[
+      L('sora','Где ключ?'),
+      L('kot','У меня.','normal'),
+      L('sora','А почему ты не вернулся с четвёртого?'),
+      L('kot','Долго объяснять.','normal'),
+      L('sora','Попробуй.'),
+      L('kot','Я попал на двадцатый.','normal'),
+      L('sora','...'),
+      L('sora','Ты был на двадцатом?'),
+      L('kot','Да.','normal'),
+      L('sora','Я попросил тебя о простой вещи.'),
+      L('kot','Я знаю.','normal'),
+      L('sora','Я не сержусь.'),
+      L('kot','А выглядишь так, будто собираешься.','normal'),
+      L('sora','Потому что испугался.'),
+      L('kot','Лань Чжань знал наших родителей.','normal'),
+      L('sora','Я знаю.'),
+      L('kot','Ты тоже?','normal'),
+      L('sora','Да.'),
+      L('kot','Почему не рассказывал?','normal'),
+      L('sora','Потому что хотел дать тебе хоть немного времени пожить без этого.'),
+      L('kot','Без чего?','normal'),
+      L('sora','Без необходимости вспоминать всё сразу.'),
+      L('kot','А если я хочу помнить?','normal'),
+      L('sora','Я знаю.'),
+      L('kot','Тогда почему ты меня остановишь?','normal'),
+      L('sora','Я тебя не остановлю.'),
+      L('kot','Правда?','normal'),
+      L('sora','Я просто буду рядом.'),
+    ]},
+    { type:'fn', fn:()=>{
+      playHeadachePang();
+      canvas.classList.add('pain-throb');
+      setTimeout(()=>canvas.classList.remove('pain-throb'), 3000);
+    }, wait:1200},
+    { type:'dialogue', lines:[
+      L('kot','...','normal'),
+      L('kot','На экране только что было другое.','normal'),
+      L('kot','«MEMORY INDEX — 73%».','normal'),
+      L('kot','Моргнул — обычный экран.','normal'),
+      L('kot','Ничего. Устал.','normal'),
+    ]},
+    { type:'directive', text:'Директива №176. Посещение закрытых этажей без соответствующего допуска запрещено. Нарушения фиксируются.' },
+  ], ()=>{
+    F.chapterDone = true; updateQuestUI();
+    setTimeout(()=>showEnding('Остров Надежды'), 900);
+  });
+}
+
+function examineElevator(id){
+  if(id==='elev_panel'){
+    if(F.elevAt===1 && F.choiceMade==='help'){
+      startDialogue([ L('kot','Четвёртый этаж.','normal') ], ()=>{
+        F.elevPressed=[4];
+        elevRideTo(4, ()=>elevatorFloorThree(), 3);
+      });
+      return;
+    }
+    if(F.elevAt===3){ startDialogue([ L('kot','Кнопки не реагируют.','normal'), L('kot','Совсем.','normal') ], null); return; }
+    startDialogue([ L('kot','Не сейчас.','normal') ], null); return;
+  }
+  if(id==='elev_doors'){
+    if(F.elevAt===1){ playDoorSound(); switchRoom('corridor',450,300,'down'); return; }
+    if(F.elevAt===3){
+      startDialogue([
+        L('kot','Тут темно.','normal'),
+        L('kot','И тихо так, что слышно собственную кровь.','normal'),
+        L('kot','Нет. Я туда не пойду.','normal'),
+      ], ()=>lilyBurstIn());
+      return;
+    }
+    startDialogue([ L('kot','Двери закрыты.','normal') ], null); return;
+  }
+  if(id==='elev_shoe'){
+    startDialogue([
+      L('kot','Туфля.','normal'),
+      L('kot','Одна.','normal'),
+      L('kot','Женская, дорогая, и лежит так, будто её потеряли на бегу.','normal'),
+      L('kot','Это плохой знак в любой истории.','normal'),
+    ], ()=>lilyBurstIn());
+    return;
+  }
+}
+
 function examineHottoHall(id){
   if(id==='hottohall_exit'){ playDoorSound(); switchRoom('hotto', 795, 305, 'down'); return; }
   if(id==='hottohall_light'){
@@ -1896,6 +3124,26 @@ function examineHottoHall(id){
                     L('kot','Сколько же тут людей, которые не открывают двери.','normal') ], null);
     return;
   }
+  if(id==='hottohall_card'){
+    if(F.hasCard){ startDialogue([ L('kot','Она у меня. И мне это не нравится.','normal') ], null); return; }
+    F.hasCard=true; F.cardFound=true; updateQuestUI();
+    playTalkBlip('kot'); toast('Карта доступа №24 — в инвентаре.');
+    startDialogue([
+      L('kot','Что-то лежит за рамой.','normal'),
+      L('kot','Металлическая. Тяжелее, чем выглядит.','normal'),
+      L('kot','Двадцать четыре.','normal'),
+      L('kot','На этаже четыре квартиры.','normal'),
+      L('kot','Значит это не отсюда.','normal'),
+      L('hotto','Ты там живой?'),
+      L('kot','Живой.','normal'),
+      L('hotto','Нашёл что-нибудь?'),
+      L('kot','...Нет.','normal'),
+      L('hotto','Ладно.'),
+      L('kot','Соврал. Первый раз за сегодня.','normal'),
+      L('kot','И почему-то не жалею.','normal'),
+    ], ()=>gabiCardCall());
+    return;
+  }
   if(id==='hottohall_mirror'){
     startDialogue(F.hottoHallLightOn
       ? [ L('kot','Зеркало. Я в нём есть.','normal'), L('kot','Уже неплохо.','normal') ]
@@ -1909,6 +3157,196 @@ function examineHottoHall(id){
       : [ L('kot','Тут ниша. Дальше — темно.','normal') ], null);
     return;
   }
+}
+
+
+// =====================================================================
+// STEALTH
+// Deliberately shallow: no pathfinding AI, no combat. Kot is only ever
+// hidden or not hidden, and being seen costs him progress, never the chapter.
+// SAFE -> SUSPICIOUS (something is looking at you) -> ALERT (caught).
+// =====================================================================
+const ST = { alarm:0, state:'SAFE', checkpoint:{x:220,y:560}, caughtAt:0, lastSeenBy:null };
+function pointInRect(x,y,r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
+function playerInCover(){
+  for(const c of pentCover) if(pointInRect(player.x, player.y, c)) return c;
+  return null;
+}
+function inCone(px,py, sx,sy, dir, fov, range){
+  const dx=px-sx, dy=py-sy, d=Math.hypot(dx,dy);
+  if(d>range || d<1) return false;
+  let a = Math.atan2(dy,dx) - dir;
+  while(a>Math.PI) a-=Math.PI*2;
+  while(a<-Math.PI) a+=Math.PI*2;
+  return Math.abs(a) <= fov;
+}
+function camDir(cam, t){ return cam.dir + (cam.sweep ? Math.sin(t/1000*(Math.PI*2/cam.period))*cam.sweep : 0); }
+
+function updateStealth(dt){
+  if(currentRoomId!=='penthouse' || !F.stealthOn){ ST.alarm=0; ST.state='SAFE'; return; }
+  const t=performance.now();
+  // patrols walk their loop, pausing at each waypoint
+  for(const p of pentPatrols){
+    const g=p.npc; if(!g || !g.visible) continue;
+    if(p.wait>0){ p.wait-=dt; g.moving=false; continue; }
+    const tgt=p.wp[p.i];
+    const dx=tgt.x-g.x, dy=tgt.y-g.y, d=Math.hypot(dx,dy);
+    if(d<3){ p.i=(p.i+1)%p.wp.length; p.wait=p.pause; g.moving=false; continue; }
+    const st=p.speed*dt;
+    g.x+=dx/d*st; g.y+=dy/d*st; g.moving=true; g.bobT+=dt*12;
+    g.facing = Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up');
+    p.dir = Math.atan2(dy,dx);
+  }
+  // who can see him
+  const cover = playerInCover();
+  let seen=false, by=null;
+  if(!cover){
+    for(const cam of pentCams){
+      if(inCone(player.x,player.y-14, cam.x,cam.y, camDir(cam,t), cam.fov, cam.range)){ seen=true; by='камера'; break; }
+    }
+    if(!seen) for(const p of pentPatrols){
+      const g=p.npc; if(!g||!g.visible||p.dir===undefined) continue;
+      if(inCone(player.x,player.y-14, g.x,g.y-20, p.dir, p.fov, p.range)){ seen=true; by='охрана'; break; }
+    }
+  }
+  // Lily buys him time: while she is drawing a patrol away nothing sees him.
+  if(seen && lilyDistracting()) seen=false;
+
+  if(seen){
+    ST.alarm = Math.min(1, ST.alarm + dt*0.62);
+    ST.lastSeenBy = by;
+    ST.state = ST.alarm>=1 ? 'ALERT' : 'SUSPICIOUS';
+    if(ST.alarm>=1 && t-ST.caughtAt>2500) stealthCaught();
+  } else {
+    ST.alarm = Math.max(0, ST.alarm - dt*0.42);
+    if(ST.alarm<=0.02) ST.state='SAFE';
+    else if(ST.state!=='ALERT') ST.state='SUSPICIOUS';
+  }
+  // passing a checkpoint banks progress
+  if(cover && cover.safe){
+    for(const c of pentCheckpoints){
+      if(Math.hypot(player.x-c.x, player.y-c.y) < 180){ ST.checkpoint = c; break; }
+    }
+  }
+}
+
+function stealthCaught(){
+  ST.caughtAt = performance.now();
+  F.stealthCaught++;
+  ST.alarm = 0; ST.state='SAFE';
+  cutsceneActive = true;
+  playDreadStinger();
+  canvas.classList.add('fogged');
+  setTimeout(()=>{
+    player.x = ST.checkpoint.x; player.y = ST.checkpoint.y;
+    camera = {x:player.x, y:player.y};
+    for(const p of pentPatrols){ p.i=0; p.wait=1.8; }
+    canvas.classList.remove('fogged');
+    cutsceneActive = false;
+    const lines = F.stealthCaught===1
+      ? [ L('kot','...Свет.','normal'), L('kot','Меня заметили.','normal'), L('kot','Назад. Пока не поздно.','normal') ]
+      : [ L('kot','Опять.','normal'), L('kot','Ладно. Медленнее.','normal') ];
+    startDialogue(lines, null);
+    toast('Вас заметили. Кот отступил в укрытие.');
+  }, 900);
+}
+
+// ---------- what the player actually sees of all this ----------
+function drawStealthOverlay(){
+  if(!F.stealthOn) return;
+  const t=performance.now();
+  ctx.save();
+  // camera cones
+  for(const cam of pentCams){
+    const d=camDir(cam,t);
+    const hot = ST.state!=='SAFE';
+    const g=ctx.createRadialGradient(cam.x,cam.y,10,cam.x,cam.y,cam.range);
+    g.addColorStop(0, hot?'rgba(226,102,47,.24)':'rgba(150,190,220,.16)');
+    g.addColorStop(1, 'rgba(150,190,220,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.moveTo(cam.x,cam.y);
+    ctx.arc(cam.x,cam.y,cam.range,d-cam.fov,d+cam.fov); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#20282e'; ctx.fillRect(cam.x-9,cam.y-9,18,14);
+    ctx.fillStyle= hot?'#e2662f':'#8fe3c9';
+    ctx.beginPath(); ctx.arc(cam.x, cam.y+1, 3, 0, Math.PI*2); ctx.fill();
+  }
+  // flashlight cones
+  for(const p of pentPatrols){
+    const g0=p.npc; if(!g0||!g0.visible||p.dir===undefined) continue;
+    const g=ctx.createRadialGradient(g0.x,g0.y-20,8,g0.x,g0.y-20,p.range);
+    g.addColorStop(0,'rgba(255,226,160,.26)'); g.addColorStop(1,'rgba(255,226,160,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.moveTo(g0.x,g0.y-20);
+    ctx.arc(g0.x,g0.y-20,p.range,p.dir-p.fov,p.dir+p.fov); ctx.closePath(); ctx.fill();
+  }
+  // cover reads as a faint safe pool under Kot's feet, only when he is in it
+  const cover=playerInCover();
+  if(cover){
+    ctx.strokeStyle='rgba(143,227,201,.30)'; ctx.lineWidth=2;
+    ctx.setLineDash([7,6]); ctx.strokeRect(cover.x,cover.y,cover.w,cover.h); ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+// The HUD lives in screen space, so it is drawn outside the world transform.
+function drawStealthHud(){
+  if(currentRoomId!=='penthouse' || !F.stealthOn) return;
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+  const cover = playerInCover();
+  const label = ST.state==='SAFE' ? (cover?'СКРЫТ':'НА ВИДУ') : (ST.state==='SUSPICIOUS'?'ВАС ЗАМЕТИЛИ':'ТРЕВОГА');
+  const col = ST.state==='SAFE' ? (cover?'#8fe3c9':'#c9c2b4') : (ST.state==='SUSPICIOUS'?'#e8b64a':'#e2662f');
+  ctx.font='bold 11px "Space Mono", monospace'; ctx.textAlign='center';
+  ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(W/2-78, 44, 156, 30);
+  ctx.fillStyle=col; ctx.fillText(label, W/2, 58);
+  ctx.fillStyle='rgba(255,255,255,.14)'; ctx.fillRect(W/2-60, 64, 120, 5);
+  ctx.fillStyle=col; ctx.fillRect(W/2-60, 64, 120*ST.alarm, 5);
+  ctx.textAlign='left'; ctx.restore();
+  if(ST.state!=='SAFE'){
+    const p=0.10+0.14*ST.alarm;
+    drawVignette(p, ST.state==='ALERT'?'120,20,10':'90,60,10');
+  }
+}
+
+// ---------- Lily on this floor ----------
+const LILY_ROUTES = [
+  [{x:640,y:545},{x:1160,y:545},{x:1320,y:400},{x:1500,y:330}],
+  [{x:1500,y:330},{x:1760,y:520},{x:1880,y:800},{x:1700,y:880}],
+  [{x:1700,y:880},{x:1200,y:1010},{x:700,y:1010},{x:1180,y:545}],
+];
+let lilyRoute = 0, lilyDistractUntil = 0, lilyTimer = null;
+function lilyDistracting(){ return performance.now() < lilyDistractUntil; }
+function lilyNextRun(){
+  clearTimeout(lilyTimer);
+  lilyTimer = setTimeout(()=>{
+    if(currentRoomId!=='penthouse' || !F.stealthOn || F.lanTalked){ return; }
+    const route = LILY_ROUTES[lilyRoute % LILY_ROUTES.length];
+    lilyRoute++;
+    lily.visible = true; lily.room='penthouse';
+    lily.x = route[0].x; lily.y = route[0].y;
+    // If Kot is exposed she runs the other way on purpose and pulls the
+    // guard off him; that is what the distraction window represents.
+    const helping = ST.state!=='SAFE' || !playerInCover();
+    if(helping){
+      lilyDistractUntil = performance.now() + 4200;
+      showThoughtBubbleAt(lily, Math.random()<0.5?'Сюда':'Тише');
+      playFootstep();
+    }
+    npcWalk(lily, route.slice(1), 210, ()=>{ lily.visible=false; lilyNextRun(); });
+  }, 9000 + Math.random()*11000);
+}
+// A thought bubble anchored to any character, not just Kot.
+function showThoughtBubbleAt(who, text){
+  const el=document.createElement('div');
+  el.className='thought-bubble'; el.textContent=text;
+  thoughtLayer.appendChild(el);
+  const place=()=>{
+    const rect=getCanvasRect(), scale=rect.width/W, zoom=roomZoom();
+    el.style.left=((who.x-camera.x)*zoom+W/2)*scale+'px';
+    el.style.top=(((who.y-camera.y)*zoom+H/2)*(rect.height/H) - 140*scale)+'px';
+  };
+  place();
+  const iv=setInterval(place,60);
+  setTimeout(()=>{ clearInterval(iv); el.remove(); }, 2600);
 }
 
 // =====================================================================
@@ -1977,13 +3415,86 @@ function updateNpcBob(dt){
   player.bobT += (player.moving ? 0.26 : 0.04)*f;
 }
 
+// =====================================================================
+// NPCs THAT ACTUALLY WALK
+// A cut-scene here is not a slideshow: the characters are the same kind of
+// object the player is, they are given a path in world coordinates, and the
+// normal render loop draws them moving along it. Nobody teleports.
+// =====================================================================
+let cutsceneActive = false;
+const npcList = [];
+function makeNpc(prefix, x, y, h){
+  const c = makeChar(prefix, x, y, h);
+  c.path=null; c.pathI=0; c.speed=150; c.onArrive=null; c.visible=false; c.room=null;
+  npcList.push(c); return c;
+}
+function npcWalk(npc, pts, speed, onDone){
+  npc.path = pts.slice(); npc.pathI = 0;
+  npc.speed = speed || 150; npc.onArrive = onDone || null;
+}
+function npcStop(npc){ npc.path=null; npc.moving=false; npc.onArrive=null; }
+function npcPlace(npc, room, x, y, facing){
+  npc.room=room; npc.x=x; npc.y=y; npc.facing=facing||'down';
+  npc.visible=true; npcStop(npc);
+}
+function updateNpcs(dt){
+  for(const npc of npcList){
+    if(!npc.path || !npc.visible){ npc.moving=false; continue; }
+    const t = npc.path[npc.pathI];
+    const dx=t.x-npc.x, dy=t.y-npc.y, d=Math.hypot(dx,dy);
+    const step = npc.speed*dt;
+    if(d<=step || d<0.5){
+      npc.x=t.x; npc.y=t.y; npc.pathI++;
+      if(npc.pathI>=npc.path.length){
+        npc.path=null; npc.moving=false;
+        const cb=npc.onArrive; npc.onArrive=null; if(cb) cb();
+      }
+      continue;
+    }
+    npc.x += dx/d*step; npc.y += dy/d*step;
+    npc.moving = true;
+    npc.facing = Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up');
+    npc.bobT += dt*16;
+  }
+}
+function drawRoomNpcs(){
+  for(const npc of npcList) if(npc.visible && npc.room===currentRoomId) drawCharSprite(npc);
+}
+
+const lily  = makeNpc('lily',  0,0, 150);
+const anmi  = makeNpc('anmi',  0,0, 186);
+const lanZ  = makeNpc('lan',   0,0, 180);
+const guardA = makeNpc('guard',0,0, 168);
+const guardB = makeNpc('guard',0,0, 168);
+
+// ---------- a two-option choice ----------
+let choiceActive = false;
+function showChoice(text, options, onPick){
+  choiceActive = true;
+  choiceText.textContent = text;
+  choiceButtons.innerHTML = '';
+  options.forEach((o,i)=>{
+    const btn = document.createElement('button');
+    btn.textContent = o;
+    btn.addEventListener('click', ()=>{
+      choiceActive = false;
+      choiceModal.classList.remove('visible');
+      onPick(i);
+    });
+    choiceButtons.appendChild(btn);
+  });
+  choiceModal.classList.add('visible');
+}
+
 function positionSoraVestibule(){ soraChar.x=698; soraChar.y=384; if(!dlgActive) soraChar.facing='left'; }
 function positionHottoRoom(){ hottoChar.x = 465; hottoChar.y = 338; hottoChar.facing='down'; }
 
 function interactionPoint(it){ return {x:it.ipx ?? it.cx, y:it.ipy ?? it.cy}; }
+function itVisible(it){ return !(it.hidden && it.hidden()); }
 function findNearestInteractable(){
   const room=ROOMS[currentRoomId]; let best=null,bestD=Infinity;
   for(const it of room.interactables){
+    if(!itVisible(it)) continue;
     const p=interactionPoint(it);
     const d=dist(player.x,player.y-14,p.x,p.y);
     if(d<it.r&&d<bestD){best=it;bestD=d;}
@@ -2001,7 +3512,7 @@ window.addEventListener('resize', invalidateCanvasRect);
 function getCanvasRect(){ return canvasRect || (canvasRect=canvas.getBoundingClientRect()); }
 function drawInteractionMarkers(){
   const rect=getCanvasRect(), rectScale=rect.width/W, rectScaleY=rect.height/H, zoom=roomZoom();
-  const list=ROOMS[currentRoomId].interactables;
+  const list=ROOMS[currentRoomId].interactables.filter(itVisible);
   while(markerPool.length<list.length){
     const m=document.createElement('div');
     m.setAttribute('aria-hidden','true');
@@ -2024,9 +3535,9 @@ function drawInteractionHint(target){
 }
 function updateCamera(){
   const room=ROOMS[currentRoomId];
-  if(currentRoomId==='hotto'){
-    // Hotto's apartment is tiny — a moving/zoomed camera does more harm than
-    // good there, so just hold a static full-room view.
+  if(CAMERA_STATIC.has(currentRoomId)){
+    // Tight rooms: a moving/zoomed camera does more harm than good, so just
+    // hold a static full-room view.
     camera.x=(room.bounds.x0+room.bounds.x1)/2; camera.y=(room.bounds.y0+room.bounds.y1)/2;
     return;
   }
@@ -2099,7 +3610,7 @@ function drawLobbyDeskForeground(){
 }
 function render(){
   const room=ROOMS[currentRoomId];
-  currentTarget=(!dlgActive&&!directiveActive&&!visionActive)?findNearestInteractable():null;
+  currentTarget=(!dlgActive&&!directiveActive&&!visionActive&&!sceneLocked()&&!choiceActive)?findNearestInteractable():null;
   updateCamera();
   ctx.clearRect(0,0,W,H);
   if(visionActive){drawVisionScene();}
@@ -2110,20 +3621,25 @@ function render(){
     if(currentRoomId==='corridor'){
       positionSoraVestibule();
       drawCharSprite(soraChar);
+      drawRoomNpcs();
       drawLobbyDeskForeground();
       drawCharSprite(player); // always drawn last: the player must never be hidden by the counter repaint
     } else if(currentRoomId==='sora'){
       // Sora sits at the reception desk now, not at home — nobody to draw here but the player.
+      drawRoomNpcs();
       drawCharSprite(player);
     } else if(currentRoomId==='hotto'){
       positionHottoRoom();
       if(!F.hottoSceneDone) drawCharSprite(hottoChar);
       drawCharSprite(player); // always on top, same reasoning as the reception counter
     } else {
-      drawCharSprite(player);
+      drawRoomNpcs();
+      drawCharSprite(player); // the player is always drawn last
     }
+    if(currentRoomId==='penthouse') drawStealthOverlay();
     ctx.restore();
   }
+  drawStealthHud();
   drawInteractionMarkers();if(currentTarget)drawInteractionHint(currentTarget);promptBubble.style.display='none';
 }
 
@@ -2138,7 +3654,9 @@ function loop(now){
   // Kot through a wall on the frame the page wakes up.
   const dt = lastFrameAt ? Math.min((now - lastFrameAt)/1000, 0.25) : 1/60;
   lastFrameAt = now;
-  if(started && !dlgActive && !directiveActive) updateMovement(dt);
+  if(started && !dlgActive && !directiveActive && !sceneLocked() && !choiceActive) updateMovement(dt);
+  if(started) updateNpcs(dt);
+  if(started) updateStealth(dt);
   if(started) updateNpcBob(dt);
   if(started) render();
   requestAnimationFrame(loop);
