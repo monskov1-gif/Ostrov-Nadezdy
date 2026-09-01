@@ -1648,8 +1648,9 @@ const pentCover = [
 // Fixed cameras. `sweep` in radians, 0 = static.
 const pentCams = [
   {x:1150,y:470, dir:Math.PI,        fov:0.62, range:430, sweep:0.00, period:1},
-  {x:1180,y:300, dir:Math.PI*0.30,   fov:0.66, range:470, sweep:0.55, period:8.5},
+  {x:1180,y:300, dir:Math.PI*0.30,   fov:0.66, range:600, sweep:0.55, period:8.5},
   {x:1975,y:300, dir:Math.PI*0.5,    fov:0.60, range:430, sweep:0.34, period:7.0},
+  {x:1810,y:820, dir:Math.PI*1.15,   fov:0.62, range:470, sweep:0.42, period:9.5},
 ];
 // Two patrols with a flashlight cone, walking loops.
 const pentPatrols = [
@@ -1657,7 +1658,9 @@ const pentPatrols = [
   { npc:null, wp:[{x:1250,y:330},{x:1740,y:330},{x:1900,y:640},{x:1900,y:900},{x:1740,y:760},{x:1250,y:760}], i:0, speed:66, fov:0.55, range:300, pause:1.2, wait:0 },
 ];
 const pentCheckpoints = [
-  {x:220,y:560},{x:660,y:545},{x:1180,y:545},{x:1430,y:170},{x:1880,y:420},{x:1620,y:1000},{x:900,y:1010},
+  {x:220,y:560},{x:620,y:540},{x:870,y:540},{x:1105,y:540},{x:1265,y:400},
+  {x:1450,y:470},{x:1450,y:660},{x:1430,y:170},{x:1716,y:710},{x:1935,y:560},
+  {x:1870,y:860},{x:1620,y:1000},{x:900,y:1010},
 ];
 const pentInteractables = [
   { id:'pent_lift',   cx:200, cy:430, r:70, ipx:200, ipy:520 },
@@ -3222,11 +3225,15 @@ function updateStealth(dt){
     if(ST.alarm<=0.02) ST.state='SAFE';
     else if(ST.state!=='ALERT') ST.state='SUSPICIOUS';
   }
-  // passing a checkpoint banks progress
-  if(cover && cover.safe){
+  // Reaching any cover banks the nearest checkpoint. Sending the player back
+  // to the lift for a mistake made three rooms later is punishment, not tension.
+  if(cover && ST.state==='SAFE'){
+    let best=null, bd=Infinity;
     for(const c of pentCheckpoints){
-      if(Math.hypot(player.x-c.x, player.y-c.y) < 180){ ST.checkpoint = c; break; }
+      const d=Math.hypot(player.x-c.x, player.y-c.y);
+      if(d<bd){ bd=d; best=c; }
     }
+    if(best && bd<340) ST.checkpoint = best;
   }
 }
 
