@@ -176,6 +176,10 @@
   }
   #pause-menu button:active{transform:translateY(3px);box-shadow:0 1px 0 #7d5f34;}
   #pause-menu button:disabled{background:#c9c1b2;color:#7d766a;box-shadow:0 4px 0 #a29a8c;cursor:default;}
+  #menu-vol{display:flex;align-items:center;gap:8px;margin:12px 0 2px;font-size:11.5px;}
+  #menu-vol label{flex:0 0 auto;opacity:.8;}
+  #menu-vol input{flex:1 1 auto;accent-color:#a9814a;}
+  #vol-value{flex:0 0 34px;text-align:right;opacity:.75;font-variant-numeric:tabular-nums;}
   #menu-hint{font-size:10.5px;opacity:.62;margin-top:10px;line-height:1.45;}
   #continue-btn{
     font-family:'Nunito',sans-serif;font-weight:800;font-size:13px;color:var(--paper);
@@ -238,6 +242,9 @@
     <button id="menu-resume">Продолжить</button>
     <button id="menu-save">Сохранить</button>
     <button id="menu-load">Загрузить</button>
+    <div id="menu-vol"><label for="vol-slider">Громкость</label>
+      <input id="vol-slider" type="range" min="0" max="100" step="5">
+      <span id="vol-value">85%</span></div>
     <div id="menu-hint">Esc — открыть и закрыть меню. Игра сохраняется сама при переходах.</div>
   </div>
   <div id="choice-modal">
@@ -352,7 +359,23 @@ function checkAllLoaded(){
 // AUDIO — room-aware ambience + dialogue blips
 // =====================================================================
 let actx = null, ambientNodes = [], ambientRoom = null, thunderTimer = null, pianoTimer = null, pianoTimer2 = null;
-function ensureAudio(){ try{ actx=actx||new(window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended') actx.resume(); return true; }catch(e){return false;} }
+let masterBus = null;
+let audioVolume = 0.85;   // 0..1, restored from localStorage below
+function master(){
+  if(!masterBus && actx){
+    masterBus = actx.createGain();
+    masterBus.gain.value = audioVolume * 4.0;   // the mix is quiet by design
+    masterBus.connect(actx.destination);
+  }
+  return masterBus || actx.destination;
+}
+function setVolume(v){
+  audioVolume = Math.max(0, Math.min(1, v));
+  if(masterBus) masterBus.gain.value = audioVolume * 4.0;
+  try{ localStorage.setItem('ostrov_volume', String(audioVolume)); }catch(e){}
+}
+try{ const sv=localStorage.getItem('ostrov_volume'); if(sv!==null) audioVolume=Math.max(0,Math.min(1,parseFloat(sv)||0)); }catch(e){}
+function ensureAudio(){ try{ actx=actx||new(window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended') actx.resume(); master(); return true; }catch(e){return false;} }
 function stopAmbientAudio(){ ambientNodes.forEach(n=>{try{n.stop&&n.stop();}catch(e){}}); ambientNodes=[]; if(thunderTimer){clearInterval(thunderTimer); clearTimeout(thunderTimer); thunderTimer=null;} if(pianoTimer){clearInterval(pianoTimer); pianoTimer=null;} if(pianoTimer2){clearTimeout(pianoTimer2); pianoTimer2=null;} stopHeartbeat(); ambientRoom=null; }
 function noiseSource(duration=2){ const buffer=actx.createBuffer(1,actx.sampleRate*duration,actx.sampleRate),data=buffer.getChannelData(0); for(let i=0;i<data.length;i++) data[i]=(Math.random()*2-1); const src=actx.createBufferSource(); src.buffer=buffer; src.loop=true; return src; }
 function startRoomAudio(roomId){
@@ -360,18 +383,18 @@ function startRoomAudio(roomId){
   if(ambientRoom===roomId) return;
   stopAmbientAudio(); ambientRoom=roomId;
   if(roomId==='hotto'){
-    const src=noiseSource(2),filter=actx.createBiquadFilter(),gain=actx.createGain();filter.type='lowpass';filter.frequency.value=1700;gain.gain.value=.032;src.connect(filter);filter.connect(gain);gain.connect(actx.destination);src.start();ambientNodes.push(src);
+    const src=noiseSource(2),filter=actx.createBiquadFilter(),gain=actx.createGain();filter.type='lowpass';filter.frequency.value=1700;gain.gain.value=.032;src.connect(filter);filter.connect(gain);gain.connect(master());src.start();ambientNodes.push(src);
     // storm flashes/thunder are handled by scheduleHottoStorm() so they always sync with the visual lightning
   } else if(roomId==='hottohall'){
     // A low, unsettling drone plus an occasional distant creak — quieter and
     // more dread-toned than the storm ambience in Hotto's own room.
-    const o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='sawtooth';o.frequency.value=42;f.type='lowpass';f.frequency.value=110;g.gain.value=.014;o.connect(f);f.connect(g);g.connect(actx.destination);o.start();ambientNodes.push(o);
+    const o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='sawtooth';o.frequency.value=42;f.type='lowpass';f.frequency.value=110;g.gain.value=.014;o.connect(f);f.connect(g);g.connect(master());o.start();ambientNodes.push(o);
     function creak(){
       if(ambientRoom!=='hottohall') return;
       const t=actx.currentTime,c=actx.createOscillator(),cg=actx.createGain();
       c.type='sawtooth';c.frequency.setValueAtTime(180+Math.random()*60,t);c.frequency.exponentialRampToValueAtTime(90,t+.9);
       cg.gain.setValueAtTime(.0001,t);cg.gain.linearRampToValueAtTime(.018,t+.05);cg.gain.exponentialRampToValueAtTime(.0001,t+1);
-      c.connect(cg);cg.connect(actx.destination);c.start(t);c.stop(t+1.05);
+      c.connect(cg);cg.connect(master());c.start(t);c.stop(t+1.05);
       thunderTimer=setTimeout(creak, 6000+Math.random()*5000);
     }
     thunderTimer=setTimeout(creak, 3500);
@@ -385,7 +408,7 @@ function startRoomAudio(roomId){
       [196.00,246.94,293.66,349.23], // G7   (G B D F)
     ];
     let chordIdx=0;
-    const jazzFilter=actx.createBiquadFilter();jazzFilter.type='lowpass';jazzFilter.frequency.value=2000;jazzFilter.connect(actx.destination);
+    const jazzFilter=actx.createBiquadFilter();jazzFilter.type='lowpass';jazzFilter.frequency.value=2000;jazzFilter.connect(master());
     const jazzVerb=actx.createGain();jazzVerb.gain.value=.5;jazzVerb.connect(jazzFilter);
     function pianoNote(freq,t,vel,dur){
       const o1=actx.createOscillator(),o2=actx.createOscillator(),g=actx.createGain(),g2=actx.createGain();
@@ -419,13 +442,13 @@ function startRoomAudio(roomId){
       }, 26000+Math.random()*22000);
     })();
   } else if(roomId==='sora'){
-    const o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='triangle';o.frequency.value=92;f.type='lowpass';f.frequency.value=600;g.gain.value=.006;o.connect(f);f.connect(g);g.connect(actx.destination);o.start();ambientNodes.push(o);
-    const n=noiseSource(2),nf=actx.createBiquadFilter(),ng=actx.createGain();nf.type='bandpass';nf.frequency.value=900;nf.Q.value=.5;ng.gain.value=.006;n.connect(nf);nf.connect(ng);ng.connect(actx.destination);n.start();ambientNodes.push(n);
+    const o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='triangle';o.frequency.value=92;f.type='lowpass';f.frequency.value=600;g.gain.value=.006;o.connect(f);f.connect(g);g.connect(master());o.start();ambientNodes.push(o);
+    const n=noiseSource(2),nf=actx.createBiquadFilter(),ng=actx.createGain();nf.type='bandpass';nf.frequency.value=900;nf.Q.value=.5;ng.gain.value=.006;n.connect(nf);nf.connect(ng);ng.connect(master());n.start();ambientNodes.push(n);
   } else if(roomId==='inner'){
     // Quiet domestic room-tone: a fridge hum plus an occasional bathroom drip,
     // so the corridor doesn't feel dead compared to the other rooms.
-    const o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='sawtooth';o.frequency.value=118;f.type='lowpass';f.frequency.value=220;g.gain.value=.010;o.connect(f);f.connect(g);g.connect(actx.destination);o.start();ambientNodes.push(o);
-    const o2=actx.createOscillator(),g2=actx.createGain();o2.type='sine';o2.frequency.value=59;g2.gain.value=.006;o2.connect(g2);g2.connect(actx.destination);o2.start();ambientNodes.push(o2);
+    const o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='sawtooth';o.frequency.value=118;f.type='lowpass';f.frequency.value=220;g.gain.value=.010;o.connect(f);f.connect(g);g.connect(master());o.start();ambientNodes.push(o);
+    const o2=actx.createOscillator(),g2=actx.createGain();o2.type='sine';o2.frequency.value=59;g2.gain.value=.006;o2.connect(g2);g2.connect(master());o2.start();ambientNodes.push(o2);
     function drip(){
       if(ambientRoom!=='inner') return;
       const t=actx.currentTime;
@@ -435,20 +458,20 @@ function startRoomAudio(roomId){
       const src=actx.createBufferSource(); src.buffer=buf;
       const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=2600; bp.Q.value=1.4;
       const bg=actx.createGain(); bg.gain.value=.05;
-      src.connect(bp); bp.connect(bg); bg.connect(actx.destination); src.start(t);
+      src.connect(bp); bp.connect(bg); bg.connect(master()); src.start(t);
       // the bowl ringing under it, quiet and quick
       const o=actx.createOscillator(), og=actx.createGain();
       o.type='sine'; o.frequency.setValueAtTime(1560,t);
       o.frequency.linearRampToValueAtTime(1500,t+.30);
       og.gain.setValueAtTime(.0001,t); og.gain.linearRampToValueAtTime(.020,t+.004);
       og.gain.exponentialRampToValueAtTime(.0001,t+.34);
-      o.connect(og); og.connect(actx.destination); o.start(t); o.stop(t+.36);
+      o.connect(og); og.connect(master()); o.start(t); o.stop(t+.36);
       thunderTimer = setTimeout(drip, 4200+Math.random()*3200);
     }
     thunderTimer = setTimeout(drip, 3000);
   }
 }
-function playThunder(){ if(!ensureAudio())return; const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='sawtooth';o.frequency.setValueAtTime(70,t);o.frequency.exponentialRampToValueAtTime(34,t+1.2);f.type='lowpass';f.frequency.value=180;g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.10,t+.06);g.gain.exponentialRampToValueAtTime(.0001,t+1.5);o.connect(f);f.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+1.55);}
+function playThunder(){ if(!ensureAudio())return; const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain(),f=actx.createBiquadFilter();o.type='sawtooth';o.frequency.setValueAtTime(70,t);o.frequency.exponentialRampToValueAtTime(34,t+1.2);f.type='lowpass';f.frequency.value=180;g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.10,t+.06);g.gain.exponentialRampToValueAtTime(.0001,t+1.5);o.connect(f);f.connect(g);g.connect(master());o.start(t);o.stop(t+1.55);}
 // A dull two-part thump on a loop. Used for the hallucination corridor and
 // for Kot's headache; it self-terminates via the stop flag it is handed.
 let heartbeatTimer=null;
@@ -463,7 +486,7 @@ function startHeartbeat(bpm, gain, shouldContinue){
     f.type='lowpass';f.frequency.value=140;
     g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(gain*amp,t+.02);
     g.gain.exponentialRampToValueAtTime(.0001,t+.30);
-    o.connect(f);f.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+.34);
+    o.connect(f);f.connect(g);g.connect(master());o.start(t);o.stop(t+.34);
   }
   function beat(){
     if(!shouldContinue()){ stopHeartbeat(); return; }
@@ -483,12 +506,12 @@ function playHeadachePang(){
   ring.type='sine';ring.frequency.setValueAtTime(3180,t);ring.frequency.linearRampToValueAtTime(2760,t+3.2);
   rg.gain.setValueAtTime(.0001,t);rg.gain.linearRampToValueAtTime(.020,t+.25);
   rg.gain.setValueAtTime(.020,t+1.9);rg.gain.exponentialRampToValueAtTime(.0001,t+3.4);
-  ring.connect(rg);rg.connect(actx.destination);ring.start(t);ring.stop(t+3.5);
+  ring.connect(rg);rg.connect(master());ring.start(t);ring.stop(t+3.5);
   const sw=actx.createOscillator(),sg=actx.createGain(),sf=actx.createBiquadFilter();
   sw.type='triangle';sw.frequency.setValueAtTime(260,t);sw.frequency.exponentialRampToValueAtTime(48,t+1.4);
   sf.type='lowpass';sf.frequency.value=420;
   sg.gain.setValueAtTime(.0001,t);sg.gain.linearRampToValueAtTime(.075,t+.10);sg.gain.exponentialRampToValueAtTime(.0001,t+1.6);
-  sw.connect(sf);sf.connect(sg);sg.connect(actx.destination);sw.start(t);sw.stop(t+1.7);
+  sw.connect(sf);sf.connect(sg);sg.connect(master());sw.start(t);sw.stop(t+1.7);
 }
 
 // The lobby lift arriving somewhere above. Two soft struck tones.
@@ -500,7 +523,7 @@ function playElevatorDing(){
     o.type='sine';o.frequency.value=fr;
     g.gain.setValueAtTime(.0001,t+d);g.gain.linearRampToValueAtTime(.030,t+d+.012);
     g.gain.exponentialRampToValueAtTime(.0001,t+d+1.5);
-    o.connect(g);g.connect(actx.destination);o.start(t+d);o.stop(t+d+1.55);
+    o.connect(g);g.connect(master());o.start(t+d);o.stop(t+d+1.55);
   });
 }
 
@@ -513,19 +536,19 @@ function playLightSwitch(){
   const src=actx.createBufferSource();src.buffer=buf;
   const f=actx.createBiquadFilter();f.type='highpass';f.frequency.value=1800;
   const g=actx.createGain();g.gain.value=.16;
-  src.connect(f);f.connect(g);g.connect(actx.destination);src.start(t);
+  src.connect(f);f.connect(g);g.connect(master());src.start(t);
   const hum=actx.createOscillator(),hg=actx.createGain();
   hum.type='sawtooth';hum.frequency.value=100;
   hg.gain.setValueAtTime(.0001,t+.04);hg.gain.linearRampToValueAtTime(.012,t+.10);
   hg.gain.exponentialRampToValueAtTime(.0001,t+1.1);
   const hf=actx.createBiquadFilter();hf.type='lowpass';hf.frequency.value=300;
-  hum.connect(hf);hf.connect(hg);hg.connect(actx.destination);hum.start(t+.04);hum.stop(t+1.15);
+  hum.connect(hf);hf.connect(hg);hg.connect(master());hum.start(t+.04);hum.stop(t+1.15);
 }
 
 function playDreadStinger(){
   if(!ensureAudio())return;
   const t=actx.currentTime;
-  const filt=actx.createBiquadFilter();filt.type='lowpass';filt.frequency.value=650;filt.connect(actx.destination);
+  const filt=actx.createBiquadFilter();filt.type='lowpass';filt.frequency.value=650;filt.connect(master());
   const master=actx.createGain();master.gain.setValueAtTime(.0001,t);master.gain.exponentialRampToValueAtTime(.16,t+.08);master.gain.exponentialRampToValueAtTime(.0001,t+2.8);master.connect(filt);
   [64,67.5,31].forEach((freq,i)=>{
     const o=actx.createOscillator(),g=actx.createGain();
@@ -533,7 +556,7 @@ function playDreadStinger(){
     g.gain.value=i===2?.5:.22;o.connect(g);g.connect(master);o.start(t);o.stop(t+2.8);
   });
 }
-function playTalkBlip(spk){ if(!ensureAudio())return; const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=spk==='hotto'?150:spk==='sora'?205:235;g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.016,t+.004);g.gain.exponentialRampToValueAtTime(.0001,t+.035);o.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+.04);}
+function playTalkBlip(spk){ if(!ensureAudio())return; const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=spk==='hotto'?150:spk==='sora'?205:235;g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.016,t+.004);g.gain.exponentialRampToValueAtTime(.0001,t+.035);o.connect(g);g.connect(master());o.start(t);o.stop(t+.04);}
 let lastFootstep=0, footstepPhase=0;
 function playFootstep(){
   if(!ensureAudio())return;
@@ -545,7 +568,7 @@ function playFootstep(){
   const src=actx.createBufferSource();src.buffer=buf;
   const f=actx.createBiquadFilter();f.type='bandpass';f.frequency.value=footstepPhase?220:180;f.Q.value=1.1;
   const g=actx.createGain();g.gain.setValueAtTime(.05,t);g.gain.exponentialRampToValueAtTime(.0001,t+.07);
-  src.connect(f);f.connect(g);g.connect(actx.destination);src.start(t);src.stop(t+.08);
+  src.connect(f);f.connect(g);g.connect(master());src.start(t);src.stop(t+.08);
 }
 function playDoorSound(){
   if(!ensureAudio())return; const t=actx.currentTime;
@@ -553,19 +576,19 @@ function playDoorSound(){
   o.type='sawtooth';o.frequency.setValueAtTime(140,t);o.frequency.exponentialRampToValueAtTime(90,t+.28);
   f.type='lowpass';f.frequency.value=500;
   g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.09,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+.32);
-  o.connect(f);f.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+.34);
+  o.connect(f);f.connect(g);g.connect(master());o.start(t);o.stop(t+.34);
   setTimeout(()=>{
     if(!actx)return; const t2=actx.currentTime;
     const o2=actx.createOscillator(),g2=actx.createGain();o2.type='triangle';o2.frequency.value=75;
     g2.gain.setValueAtTime(.08,t2);g2.gain.exponentialRampToValueAtTime(.0001,t2+.14);
-    o2.connect(g2);g2.connect(actx.destination);o2.start(t2);o2.stop(t2+.15);
+    o2.connect(g2);g2.connect(master());o2.start(t2);o2.stop(t2+.15);
   },260);
 }
 function playPhoneRing(){
   if(!ensureAudio())return;
   const bell = actx.createBiquadFilter();
   bell.type='bandpass'; bell.frequency.value=1150; bell.Q.value=2.2;
-  bell.connect(actx.destination);
+  bell.connect(master());
   // One burst = two tones warbling against each other, cut off sharply.
   function burst(at, dur){
     [440,540].forEach((freq,i)=>{
@@ -1755,11 +1778,23 @@ const pentPatrols = [
   { npc:null, wp:[{x:1200,y:330},{x:1740,y:330},{x:1900,y:640},{x:1900,y:900},{x:1740,y:760},{x:1200,y:760}], i:0, speed:66, baseSpeed:66, chaseSpeed:120,
     fov:0.55, range:300, pause:1.2, wait:0, chase:null, chaseUntil:0 },
 ];
-const pentCheckpoints = [
-  {x:220,y:560},{x:620,y:540},{x:870,y:540},{x:1105,y:540},{x:1265,y:400},
-  {x:1450,y:470},{x:1450,y:660},{x:1430,y:170},{x:1716,y:710},{x:1935,y:560},
-  {x:1870,y:860},{x:1620,y:1000},{x:900,y:1010},
-];
+// Built from pentCover once the room exists: the middle of each hiding place,
+// nudged to somewhere Kot can actually stand. Never authored by hand again.
+let pentCheckpoints = [{x:220,y:560}];
+let checkpointsBuilt = false;
+function buildCheckpoints(){
+  if(checkpointsBuilt) return;
+  checkpointsBuilt = true;
+  const out=[];
+  for(const c of pentCover){
+    const cx = c.x + c.w/2, cy = c.y + c.h/2;
+    const spot = safeSpotNear('penthouse', cx, cy);
+    if(!spot) continue;
+    // only keep it if the resolved spot is still inside this hiding place
+    if(spot.x>=c.x && spot.x<=c.x+c.w && spot.y>=c.y && spot.y<=c.y+c.h) out.push(spot);
+  }
+  if(out.length) pentCheckpoints = out;
+}
 const pentInteractables = [
   { id:'pent_lift',   cx:200, cy:430, r:70, ipx:200, ipy:520 },
   { id:'pent_niche',  cx:620, cy:478, r:60, ipx:620, ipy:540 },
@@ -2949,6 +2984,7 @@ function lilyBurstIn(){
 // =====================================================================
 function enterPenthouse(){
   F.penthouseReached = true;
+  buildCheckpoints();
   lily.clampToFloor = false;   // scripted entrance; her patrol routes re-enable it
   switchRoom('penthouse', 220, 560, 'right');
   npcPlace(lily,'penthouse', 300, 600, 'right');
@@ -3384,8 +3420,18 @@ function updateStealth(dt){
   // Patrols: walk the loop, or run down whoever they just saw.
   for(const p of pentPatrols){
     const g=p.npc; if(!g || !g.visible) continue;
+    // A guard chasing a person follows that person, not the spot they used to
+    // be standing on.
+    if(p.chaseNpc){
+      if(p.chaseNpc.visible && p.chaseNpc.room===currentRoomId){
+        p.chase = {x:p.chaseNpc.x, y:p.chaseNpc.y};
+        p.chaseUntil = Math.max(p.chaseUntil, t + 1500);
+      } else {
+        p.chaseNpc = null;              // she got away; the last spot is all he has
+      }
+    }
     const chasing = p.chase && t < p.chaseUntil;
-    if(!chasing && p.chase){ p.chase=null; p.speed=p.baseSpeed; p.wait=0.8; }
+    if(!chasing && p.chase){ p.chase=null; p.chaseNpc=null; p.speed=p.baseSpeed; p.wait=0.8; }
     if(!chasing && p.wait>0){ p.wait-=dt; g.moving=false; continue; }
     const tgt = chasing ? p.chase : p.wp[p.i];
     const dx=tgt.x-g.x, dy=tgt.y-g.y, d=Math.hypot(dx,dy);
@@ -3395,7 +3441,7 @@ function updateStealth(dt){
         // then give up. If Kot is standing right there, that is the catch.
         p.chase=null; p.speed=p.baseSpeed; p.wait=1.4;
         g.moving=false;
-        if(!playerInCover() && Math.hypot(player.x-g.x, player.y-g.y) < 92 && t-ST.caughtAt>2500){ stealthCaught(); }
+        if(!p.chaseNpc && !playerInCover() && Math.hypot(player.x-g.x, player.y-g.y) < 92 && t-ST.caughtAt>2500){ stealthCaught(); }
         continue;
       }
       p.i=(p.i+1)%p.wp.length; p.wait=p.pause; g.moving=false; continue;
@@ -3405,21 +3451,38 @@ function updateStealth(dt){
     g.facing = Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up');
     p.dir = Math.atan2(dy,dx);
     // being physically caught up with ends it immediately
-    if(chasing && !playerInCover() && Math.hypot(player.x-g.x, player.y-(g.y-10)) < 58 && t-ST.caughtAt>2500){ stealthCaught(); }
+    if(chasing && !p.chaseNpc && !playerInCover() && Math.hypot(player.x-g.x, player.y-(g.y-10)) < 58 && t-ST.caughtAt>2500){ stealthCaught(); }
   }
   // who can see him
   const cover = playerInCover();
-  let seen=false, by=null;
+  let seenByCam=false, seenByGuard=false;
   if(!cover){
     for(const cam of pentCams){
-      if(inCone(player.x,player.y-14, cam.x,cam.y, camDir(cam,t), cam.fov, cam.range)){ seen=true; by='камера'; break; }
+      if(inCone(player.x,player.y-14, cam.x,cam.y, camDir(cam,t), cam.fov, cam.range)){ seenByCam=true; break; }
     }
-    if(!seen) for(const p of pentPatrols){
+    for(const p of pentPatrols){
       const g=p.npc; if(!g||!g.visible||p.dir===undefined) continue;
-      if(inCone(player.x,player.y-14, g.x,g.y-20, p.dir, p.fov, p.range)){ seen=true; by='охрана'; break; }
+      if(inCone(player.x,player.y-14, g.x,g.y-20, p.dir, p.fov, p.range)){ seenByGuard=true; break; }
     }
   }
-  // Lily buys him time: while she is drawing a patrol away nothing sees him.
+  let seen = seenByCam || seenByGuard;
+  const by = seenByGuard ? 'охрана' : (seenByCam ? 'камера' : null);
+  // Guards notice Lily crossing their light whether or not Kot is anywhere
+  // near — that is what makes her running around mean something.
+  if(lily.visible && lily.room===currentRoomId){
+    for(const p of pentPatrols){
+      const g=p.npc; if(!g||!g.visible||p.dir===undefined) continue;
+      if(inCone(lily.x, lily.y-14, g.x, g.y-20, p.dir, p.fov*1.15, p.range*1.15)){
+        p.chase = {x:lily.x, y:lily.y};
+        p.chaseNpc = lily;
+        p.chaseUntil = t + 5000;
+        if(!p.sawLily){ p.sawLily=true; playTalkBlip('hotto'); showThoughtBubbleAt(g,'Стоять!'); }
+      }
+    }
+  } else {
+    for(const p of pentPatrols) p.sawLily=false;
+  }
+  // While she has someone's attention, Kot is not the one being looked at.
   if(seen && lilyDistracting()) seen=false;
 
   if(seen){
@@ -3432,6 +3495,7 @@ function updateStealth(dt){
       let near=null, nd=Infinity;
       for(const p of pentPatrols){
         const g=p.npc; if(!g||!g.visible) continue;
+        if(p.chaseNpc) continue;          // this one is busy running after Lily
         const d=Math.hypot(g.x-player.x, g.y-player.y);
         if(d<nd){ nd=d; near=p; }
       }
@@ -3441,7 +3505,8 @@ function updateStealth(dt){
         if(!near.wasChasing){ near.wasChasing=true; playTalkBlip('hotto'); }
       }
     }
-    if(ST.alarm>=1 && t-ST.caughtAt>2500) stealthCaught();
+    // No stealthCaught() here on purpose: a full meter means "they know where
+    // you are", and a guard has to physically reach you to end it.
   } else {
     ST.alarm = Math.max(0, ST.alarm - dt*0.42);
     if(ST.alarm<=0.02){ ST.state='SAFE'; for(const p of pentPatrols) p.wasChasing=false; }
@@ -3579,7 +3644,13 @@ function lilyNextRun(){
         const d=Math.hypot(g.x-lily.x, g.y-lily.y);
         if(d<nd){ nd=d; near=p; }
       }
-      if(near){ near.chase={x:lily.x,y:lily.y}; near.chaseUntil=performance.now()+5200; }
+      if(near){
+        near.chase = {x:lily.x, y:lily.y};
+        near.chaseNpc = lily;                       // follow HER, not a spot
+        near.chaseUntil = performance.now()+5200;
+        near.wasChasing = true;
+        playTalkBlip('hotto');
+      }
     }
     npcWalk(lily, route.slice(1), 210, ()=>{ lily.visible=false; lilyNextRun(); });
   }, 9000 + Math.random()*11000);
@@ -4021,6 +4092,7 @@ function applySave(d){
   updateQuestUI();
 }
 function rearmPenthouse(){
+  buildCheckpoints();
   for(let i=0;i<pentPatrols.length;i++){
     const g = i===0 ? guardA : guardB;
     pentPatrols[i].npc = g;
@@ -4048,6 +4120,8 @@ function toggleMenu(force){
     const sum = saveSummary();
     menuLoadBtn.disabled = !sum;
     menuLoadBtn.textContent = sum ? ('Загрузить · ' + sum) : 'Сохранений нет';
+    volSlider.value = Math.round(audioVolume*100);
+    volValue.textContent = volSlider.value + '%';
     menuSaveBtn.disabled = !worldIsQuiet();
     menuSaveBtn.textContent = worldIsQuiet() ? 'Сохранить' : 'Сейчас нельзя сохранить';
   }
@@ -4110,6 +4184,15 @@ restartBtn.addEventListener('click', ()=>{ clearSave(); location.reload(); });
 document.getElementById('menu-resume').addEventListener('click', ()=>toggleMenu(false));
 menuSaveBtn.addEventListener('click', ()=>{ if(worldIsQuiet()){ saveGame(false); toggleMenu(false); } });
 menuLoadBtn.addEventListener('click', ()=>{ if(loadGame()) toggleMenu(false); });
+const volSlider = document.getElementById('vol-slider');
+const volValue  = document.getElementById('vol-value');
+volSlider.value = Math.round(audioVolume*100);
+volValue.textContent = volSlider.value + '%';
+volSlider.addEventListener('input', ()=>{
+  setVolume(volSlider.value/100);
+  volValue.textContent = volSlider.value + '%';
+  if(actx) playTalkBlip('kot');   // so the player hears what they picked
+});
 
 loop();
 
