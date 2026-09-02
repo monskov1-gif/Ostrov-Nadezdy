@@ -2867,6 +2867,7 @@ function scheduleLilyBurstIn(){
 function lilyBurstIn(){
   if(F.lilyMet) return;
   F.lilyMet = true;
+  lily.clampToFloor = false;   // she comes in from outside the cabin on purpose
   clearTimeout(lilyBurstTimer);
   cutsceneActive = true;
   npcPlace(lily, 'elevator', 452, 760, 'up');
@@ -2948,6 +2949,7 @@ function lilyBurstIn(){
 // =====================================================================
 function enterPenthouse(){
   F.penthouseReached = true;
+  lily.clampToFloor = false;   // scripted entrance; her patrol routes re-enable it
   switchRoom('penthouse', 220, 560, 'right');
   npcPlace(lily,'penthouse', 300, 600, 'right');
   cutsceneActive = true;
@@ -3174,6 +3176,7 @@ function oldPhotoScene(){
 
 function stairsFarewell(){
   cutsceneActive = true;
+  lily.clampToFloor = false;
   npcPlace(lily,'penthouse', 560, 1012, 'right');
   runSequence([
     { type:'dialogue', lines:[
@@ -3559,6 +3562,7 @@ function lilyNextRun(){
     if(currentRoomId!=='penthouse' || !F.stealthOn || F.lanTalked){ return; }
     const route = LILY_ROUTES[lilyRoute % LILY_ROUTES.length];
     lilyRoute++;
+    lily.clampToFloor = true;   // free roaming: never let her cross a wall
     lily.visible = true; lily.room='penthouse';
     lily.x = route[0].x; lily.y = route[0].y;
     // If Kot is exposed she runs the other way on purpose and pulls the
@@ -3731,7 +3735,7 @@ function drawRoomNpcs(){
   for(const npc of npcList) if(npc.visible && npc.room===currentRoomId) drawCharSprite(npc);
 }
 
-const lily  = makeNpc('lily',  0,0, 150); lily.clampToFloor = true;
+const lily  = makeNpc('lily',  0,0, 150); // clampToFloor is switched on only for her stealth routes
 const anmi  = makeNpc('anmi',  0,0, 186);
 const lanZ  = makeNpc('lan',   0,0, 180);
 const guardA = makeNpc('guard',0,0, 168);
@@ -4052,6 +4056,22 @@ function toggleMenu(force){
 // =====================================================================
 // MAIN LOOP
 // =====================================================================
+// A scripted chain runs across several timeouts and callbacks. If one of them
+// ever fails to fire, cutsceneActive stays set and the player is locked out of
+// their own game with no way back. This watches for exactly that: the world
+// held, with nothing actually happening, for long enough that nothing can be
+// coming — and hands control back.
+let lockWatch = 0;
+function updateLockWatchdog(dt){
+  const busy = dlgActive || directiveActive || choiceActive || visionActive ||
+               menuOpen || seqLocks > 0 || VIS.gabiMoving ||
+               npcList.some(n => n.visible && n.path);
+  if(cutsceneActive && !busy){
+    lockWatch += dt;
+    if(lockWatch > 8){ cutsceneActive = false; lockWatch = 0; }
+  } else lockWatch = 0;
+}
+
 let started = false;
 let lastFrameAt = 0;
 function loop(now){
@@ -4062,6 +4082,7 @@ function loop(now){
   if(started && !dlgActive && !directiveActive && !sceneLocked() && !choiceActive && !menuOpen) updateMovement(dt);
   if(started) updateNpcs(dt);
   if(started) updateStealth(dt);
+  if(started) updateLockWatchdog(dt);
   if(started) updateNpcBob(dt);
   if(started) render();
   requestAnimationFrame(loop);
